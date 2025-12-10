@@ -39,6 +39,14 @@ AI agents are powerful, but without guardrails they can:
 | `require_human_approval` | Request human-in-the-loop approval |
 | `log_event` | Log audit events for compliance |
 
+### 🎨 CSS Governance Tools
+
+| Tool | Description |
+|------|-------------|
+| `css_eval` | Evaluate CSS before adding - finds duplicates, suggests externalization |
+| `analyze_css_cleanup` | Analyze existing CSS for cleanup opportunities |
+| `suggest_css_variables` | Identify values that should be CSS custom properties |
+
 ### 📋 Built-in Rule Sets
 
 - **Security Rules** - SQL injection prevention, privilege escalation detection, authentication enforcement
@@ -46,6 +54,7 @@ AI agents are powerful, but without guardrails they can:
 - **UX Rules** - Response length limits, accessibility checks, user experience validation
 - **Architecture Rules** - API versioning, circuit breakers, observability requirements
 - **Operational Rules** - Cost controls, deployment windows, incident escalation
+- **CSS Rules** - Inline style detection, specificity warnings, variable recommendations
 
 ### 🎛️ Presets
 
@@ -56,6 +65,7 @@ AI agents are powerful, but without guardrails they can:
 | `strict` | Full compliance and governance |
 | `financial` | Optimized for financial services |
 | `healthcare` | HIPAA-focused for healthcare |
+| `frontend` | Frontend development with CSS governance |
 | `development` | Relaxed rules for dev environment |
 
 ---
@@ -199,6 +209,68 @@ Log audit events for compliance.
     "format": "csv",
     "destination": "s3://exports/"
   }
+}
+```
+
+### css_eval
+
+Evaluate CSS before adding it. Checks for duplicates, recommends externalization, and more.
+
+```json
+{
+  "newRule": {
+    "selector": ".card-header",
+    "properties": {
+      "background-color": "#3b82f6",
+      "padding": "16px",
+      "border-radius": "8px"
+    },
+    "source": "inline"
+  },
+  "existingRules": [
+    {
+      "selector": ".header",
+      "properties": {
+        "background-color": "#3b82f6",
+        "padding": "16px"
+      },
+      "source": "external",
+      "file": "styles.css"
+    }
+  ],
+  "context": {
+    "framework": "react",
+    "hasStyleSystem": true,
+    "styleSystemName": "tailwind"
+  }
+}
+```
+
+**Returns:**
+```json
+{
+  "shouldExternalize": true,
+  "shouldMakeGlobal": false,
+  "duplicates": [{ "selector": ".header", "...": "..." }],
+  "suggestions": [
+    {
+      "type": "use_existing",
+      "severity": "warning",
+      "message": "Similar CSS properties (80% match) found in '.header'"
+    },
+    {
+      "type": "externalize",
+      "severity": "warning",
+      "message": "Inline styles should be moved to external stylesheet"
+    },
+    {
+      "type": "use_variable",
+      "severity": "info",
+      "message": "background-color: #3b82f6 should use a CSS variable"
+    }
+  ],
+  "riskScore": 35,
+  "summary": "Should be moved to external stylesheet. 1 warning(s)."
 }
 ```
 

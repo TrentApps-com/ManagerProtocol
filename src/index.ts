@@ -35,13 +35,26 @@ export {
   uxRules,
   architectureRules,
   operationalRules,
+  cssRules,
   allBuiltInRules,
   defaultRateLimits,
   rulePresets,
   getRulesByType,
   getRulesByTags,
-  getRulesForCompliance
+  getRulesForCompliance,
+  getCSSRules,
+  getFrontendRules
 } from './rules/index.js';
+
+// Analyzers
+export {
+  CSSAnalyzer,
+  cssAnalyzer,
+  type CSSRule,
+  type CSSAnalysisContext,
+  type CSSSuggestion,
+  type CSSAnalysisResult
+} from './analyzers/index.js';
 
 // Main supervisor
 export {

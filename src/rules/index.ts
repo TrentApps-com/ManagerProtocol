@@ -9,6 +9,7 @@ import { complianceRules } from './compliance.js';
 import { uxRules } from './ux.js';
 import { architectureRules } from './architecture.js';
 import { operationalRules } from './operational.js';
+import { cssRules } from './css.js';
 import type { BusinessRule, RateLimitConfig } from '../types/index.js';
 
 // Re-export individual rule sets
@@ -17,6 +18,7 @@ export { complianceRules } from './compliance.js';
 export { uxRules } from './ux.js';
 export { architectureRules } from './architecture.js';
 export { operationalRules } from './operational.js';
+export { cssRules } from './css.js';
 
 /**
  * All built-in rules combined
@@ -26,7 +28,8 @@ export const allBuiltInRules: BusinessRule[] = [
   ...complianceRules,
   ...uxRules,
   ...architectureRules,
-  ...operationalRules
+  ...operationalRules,
+  ...cssRules
 ];
 
 /**
@@ -214,5 +217,39 @@ export const rulePresets = {
       )
     })),
     rateLimits: []
+  },
+
+  /**
+   * Frontend - Optimized for frontend development with CSS governance
+   */
+  frontend: {
+    rules: [
+      ...securityRules.filter(r =>
+        r.tags?.some(t => ['xss', 'injection', 'authentication'].includes(t)) ||
+        r.id.startsWith('sec-05') // Injection prevention
+      ),
+      ...uxRules,
+      ...architectureRules.filter(r =>
+        r.tags?.some(t => ['api', 'performance', 'caching'].includes(t))
+      ),
+      ...cssRules
+    ],
+    rateLimits: defaultRateLimits.slice(0, 3)
   }
 };
+
+/**
+ * Get CSS-specific rules
+ */
+export function getCSSRules(): BusinessRule[] {
+  return cssRules;
+}
+
+/**
+ * Get rules for frontend development
+ */
+export function getFrontendRules(): BusinessRule[] {
+  return [...uxRules, ...cssRules, ...architectureRules.filter(r =>
+    r.tags?.some(t => ['performance', 'caching'].includes(t))
+  )];
+}
