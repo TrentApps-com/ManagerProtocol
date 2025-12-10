@@ -4,6 +4,11 @@
  * Analyzes CSS rules for optimization, deduplication, and best practices.
  */
 
+import {
+  suggestToken,
+  getRecommendedTokens
+} from '../design-system/index.js';
+
 export interface CSSRule {
   selector: string;
   properties: Record<string, string>;
@@ -335,7 +340,7 @@ export class CSSAnalyzer {
   }
 
   /**
-   * Check for CSS variable candidates
+   * Check for CSS variable candidates using design system tokens
    */
   private checkVariableCandidates(rule: CSSRule): {
     suggestions: CSSSuggestion[];
@@ -343,6 +348,27 @@ export class CSSAnalyzer {
     const suggestions: CSSSuggestion[] = [];
 
     for (const [property, value] of Object.entries(rule.properties)) {
+      // First, try to find an exact or close match from the design system
+      const tokenSuggestion = suggestToken(value, property);
+
+      if (tokenSuggestion && tokenSuggestion.confidence >= 0.7) {
+        const { token, confidence } = tokenSuggestion;
+        const confidencePercent = Math.round(confidence * 100);
+
+        suggestions.push({
+          type: 'use_variable',
+          severity: confidence >= 0.95 ? 'warning' : 'info',
+          message: `${property}: ${value} should use design token var(${token.name})`,
+          details: confidence >= 0.95
+            ? `Exact match found: "${token.description}" - Use design system token for consistency`
+            : `Close match (${confidencePercent}%): "${token.description}" - Consider using design system token`,
+          suggestedAction: `Replace with var(${token.name})`,
+          codeExample: `${property}: var(${token.name}); /* ${token.description} */`
+        });
+        continue;
+      }
+
+      // Fall back to generic variable suggestions for unmatched values
       for (const candidate of VARIABLE_CANDIDATES) {
         if (candidate.pattern.test(value)) {
           // Skip small values for spacing
@@ -351,13 +377,24 @@ export class CSSAnalyzer {
             if (numValue < candidate.minValue) continue;
           }
 
+          // Map candidate type to token category
+          const tokenCategory = this.mapTypeToTokenCategory(candidate.type);
+          const recommendedTokens = tokenCategory ? getRecommendedTokens(tokenCategory) : [];
+          const tokenList = recommendedTokens.slice(0, 3).map(t => t.name).join(', ');
+
           suggestions.push({
             type: 'use_variable',
             severity: 'info',
             message: `${property}: ${value} should use a CSS variable`,
-            details: `${candidate.type} values should be defined as CSS custom properties for consistency`,
-            suggestedAction: `Replace with var(${candidate.varPrefix}xxx)`,
-            codeExample: `${property}: var(${candidate.varPrefix}primary);`
+            details: recommendedTokens.length > 0
+              ? `Available ${candidate.type} tokens: ${tokenList}`
+              : `${candidate.type} values should be defined as CSS custom properties for consistency`,
+            suggestedAction: recommendedTokens.length > 0
+              ? `Consider design tokens: ${tokenList}`
+              : `Replace with var(${candidate.varPrefix}xxx)`,
+            codeExample: recommendedTokens.length > 0
+              ? `${property}: var(${recommendedTokens[0].name}); /* ${recommendedTokens[0].description} */`
+              : `${property}: var(${candidate.varPrefix}primary);`
           });
           break;
         }
@@ -710,6 +747,21 @@ export class CSSAnalyzer {
       'font-bold', 'font-normal', 'font-medium'
     ];
     utilities.forEach(u => this.knownUtilityClasses.add(u));
+  }
+
+  /**
+   * Map VARIABLE_CANDIDATES types to design token categories
+   */
+  private mapTypeToTokenCategory(candidateType: string): 'background' | 'color' | 'border' | 'spacing' | 'radius' | 'shadow' | null {
+    const mapping: Record<string, 'background' | 'color' | 'border' | 'spacing' | 'radius' | 'shadow'> = {
+      'color': 'color',
+      'spacing': 'spacing',
+      'font-size': 'color', // No direct match, fallback
+      'font-weight': 'color', // No direct match, fallback
+      'duration': 'color', // No direct match, fallback
+      'easing': 'color' // No direct match, fallback
+    };
+    return mapping[candidateType] || null;
   }
 }
 

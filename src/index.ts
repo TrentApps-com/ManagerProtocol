@@ -56,6 +56,24 @@ export {
   type CSSAnalysisResult
 } from './analyzers/index.js';
 
+// Design System
+export {
+  type DesignToken,
+  colorTokens,
+  spacingTokens,
+  radiusTokens,
+  shadowTokens,
+  typographyTokens,
+  zIndexTokens,
+  transitionTokens,
+  allTokens,
+  valueToTokenMap,
+  findMatchingToken,
+  suggestToken,
+  getRecommendedTokens,
+  designSystem
+} from './design-system/index.js';
+
 // Main supervisor
 export {
   AgentSupervisor,
