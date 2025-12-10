@@ -752,14 +752,14 @@ export class CSSAnalyzer {
   /**
    * Map VARIABLE_CANDIDATES types to design token categories
    */
-  private mapTypeToTokenCategory(candidateType: string): 'background' | 'color' | 'border' | 'spacing' | 'radius' | 'shadow' | null {
-    const mapping: Record<string, 'background' | 'color' | 'border' | 'spacing' | 'radius' | 'shadow'> = {
+  private mapTypeToTokenCategory(candidateType: string): 'background' | 'color' | 'border' | 'spacing' | 'radius' | 'shadow' | 'font-size' | 'z-index' | 'transition' | null {
+    const mapping: Record<string, 'background' | 'color' | 'border' | 'spacing' | 'radius' | 'shadow' | 'font-size' | 'z-index' | 'transition'> = {
       'color': 'color',
       'spacing': 'spacing',
-      'font-size': 'color', // No direct match, fallback
-      'font-weight': 'color', // No direct match, fallback
-      'duration': 'color', // No direct match, fallback
-      'easing': 'color' // No direct match, fallback
+      'font-size': 'font-size',
+      'font-weight': 'color', // No direct match in token categories
+      'duration': 'transition',
+      'easing': 'transition'
     };
     return mapping[candidateType] || null;
   }
