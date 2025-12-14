@@ -6,12 +6,16 @@
 
 import { v4 as uuidv4 } from 'uuid';
 import type { AuditEvent, AuditEventType, RiskLevel } from '../types/index.js';
+import { withRetry, WebhookDeliveryError, formatError } from '../utils/errors.js';
 
 export interface AuditLoggerOptions {
   maxEvents?: number;
   enableConsoleLog?: boolean;
   webhookUrl?: string;
+  webhookRetries?: number;
+  webhookTimeoutMs?: number;
   onEvent?: (event: AuditEvent) => void | Promise<void>;
+  onWebhookError?: (error: Error, event: AuditEvent) => void;
 }
 
 export class AuditLogger {
@@ -19,13 +23,19 @@ export class AuditLogger {
   private maxEvents: number;
   private enableConsoleLog: boolean;
   private webhookUrl?: string;
+  private webhookRetries: number;
+  private webhookTimeoutMs: number;
   private onEvent?: (event: AuditEvent) => void | Promise<void>;
+  private onWebhookError?: (error: Error, event: AuditEvent) => void;
 
   constructor(options: AuditLoggerOptions = {}) {
     this.maxEvents = options.maxEvents || 10000;
     this.enableConsoleLog = options.enableConsoleLog || false;
     this.webhookUrl = options.webhookUrl;
+    this.webhookRetries = options.webhookRetries ?? 3;
+    this.webhookTimeoutMs = options.webhookTimeoutMs ?? 5000;
     this.onEvent = options.onEvent;
+    this.onWebhookError = options.onWebhookError;
   }
 
   /**
@@ -353,21 +363,57 @@ export class AuditLogger {
   }
 
   /**
-   * Send event to webhook
+   * Send event to webhook with retry logic
    */
   private async sendWebhook(event: AuditEvent): Promise<void> {
-    if (!this.webhookUrl) return;
+    if (!this.webhookUrl) {
+      return;
+    }
+
+    const url = this.webhookUrl;
+    const timeoutMs = this.webhookTimeoutMs;
 
     try {
-      await fetch(this.webhookUrl, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
+      await withRetry(
+        async () => {
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+          try {
+            const response = await fetch(url, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'X-Event-Id': event.eventId,
+                'X-Event-Type': event.eventType
+              },
+              body: JSON.stringify(event),
+              signal: controller.signal
+            });
+
+            if (!response.ok) {
+              throw new WebhookDeliveryError(
+                url,
+                `HTTP ${response.status}: ${response.statusText}`,
+                response.status
+              );
+            }
+          } finally {
+            clearTimeout(timeoutId);
+          }
         },
-        body: JSON.stringify(event)
-      });
+        { maxRetries: this.webhookRetries }
+      );
     } catch (error) {
-      console.error('Failed to send audit event to webhook:', error);
+      const webhookError = error instanceof Error ? error : new Error(String(error));
+
+      // Call error callback if provided
+      if (this.onWebhookError) {
+        this.onWebhookError(webhookError, event);
+      }
+
+      // Log to console with formatted error
+      console.error(`Failed to send audit event to webhook: ${formatError(error)}`);
     }
   }
 }
