@@ -86,5 +86,22 @@ export {
   type AgentSupervisorOptions
 } from './supervisor/AgentSupervisor.js';
 
+// Utilities
+export {
+  AgentSupervisorError,
+  RuleValidationError,
+  RuleNotFoundError,
+  RateLimitExceededError,
+  ApprovalNotFoundError,
+  ApprovalExpiredError,
+  ConfigurationError,
+  WebhookDeliveryError,
+  withRetry,
+  isAgentSupervisorError,
+  formatError,
+  safeStringify,
+  type RetryOptions
+} from './utils/index.js';
+
 // MCP Server
 export { server, startServer } from './server.js';
