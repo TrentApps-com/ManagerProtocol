@@ -10,7 +10,6 @@ import type {
   BusinessRule,
   BusinessContext,
   RuleCondition,
-  RuleConditionOperator,
   EvaluationResult,
   RuleViolation,
   RiskLevel,
@@ -442,13 +441,13 @@ export class RulesEngine {
    */
   private registerDefaultEvaluators(): void {
     // Time-based evaluator
-    this.registerCustomEvaluator('businessHours', (context) => {
+    this.registerCustomEvaluator('businessHours', (_context) => {
       const hour = new Date().getHours();
       return hour >= 9 && hour < 17;
     });
 
     // Weekday evaluator
-    this.registerCustomEvaluator('weekday', (context) => {
+    this.registerCustomEvaluator('weekday', (_context) => {
       const day = new Date().getDay();
       return day >= 1 && day <= 5;
     });

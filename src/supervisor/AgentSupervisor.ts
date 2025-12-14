@@ -9,6 +9,7 @@ import { RulesEngine } from '../engine/RulesEngine.js';
 import { RateLimiter } from '../engine/RateLimiter.js';
 import { AuditLogger, type AuditLoggerOptions } from '../engine/AuditLogger.js';
 import { ApprovalManager, type ApprovalManagerOptions } from '../engine/ApprovalManager.js';
+import { AppMonitor, type AppMonitorOptions } from '../engine/AppMonitor.js';
 import { allBuiltInRules, defaultRateLimits, rulePresets } from '../rules/index.js';
 import type {
   SupervisorConfig,
@@ -19,13 +20,18 @@ import type {
   ApprovalRequest,
   AuditEvent,
   BusinessRule,
-  RateLimitConfig
+  RateLimitConfig,
+  MonitoredApp,
+  AppHealthCheckResult,
+  AppStatusHistoryEntry,
+  AppMonitorStats
 } from '../types/index.js';
 
 export interface AgentSupervisorOptions {
   config?: Partial<SupervisorConfig>;
   auditOptions?: AuditLoggerOptions;
   approvalOptions?: ApprovalManagerOptions;
+  appMonitorOptions?: AppMonitorOptions;
 }
 
 export class AgentSupervisor {
@@ -34,6 +40,7 @@ export class AgentSupervisor {
   private rateLimiter: RateLimiter;
   private auditLogger: AuditLogger;
   private approvalManager: ApprovalManager;
+  private appMonitor: AppMonitor;
   private initialized: boolean = false;
 
   constructor(options: AgentSupervisorOptions = {}) {
@@ -43,6 +50,7 @@ export class AgentSupervisor {
     this.rateLimiter = new RateLimiter();
     this.auditLogger = new AuditLogger(options.auditOptions);
     this.approvalManager = new ApprovalManager(options.approvalOptions);
+    this.appMonitor = new AppMonitor(options.appMonitorOptions);
   }
 
   /**
@@ -120,7 +128,11 @@ export class AgentSupervisor {
           warnings: [`Rate limit exceeded: ${rateLimitCheck.limitId}`],
           appliedRules: [],
           requiresHumanApproval: false,
-          rateLimitInfo: rateLimitCheck.state,
+          rateLimitInfo: rateLimitCheck.state ? {
+            limited: true,
+            remaining: rateLimitCheck.state.remaining,
+            resetAt: rateLimitCheck.state.resetAt
+          } : undefined,
           evaluatedAt: new Date().toISOString()
         };
       }
@@ -406,6 +418,197 @@ export class AgentSupervisor {
       'preset_loaded',
       { preset }
     );
+  }
+
+  // ============================================================================
+  // APP MONITORING
+  // ============================================================================
+
+  /**
+   * Add a production app to monitor
+   */
+  async addMonitoredApp(config: {
+    name: string;
+    path: string;
+    port: number;
+    description?: string;
+    healthEndpoint?: string;
+    expectedResponseCode?: number;
+    checkIntervalMs?: number;
+    timeoutMs?: number;
+    tags?: string[];
+    metadata?: Record<string, unknown>;
+    autoStart?: boolean;
+  }): Promise<MonitoredApp> {
+    const app = await this.appMonitor.addApp(config);
+
+    await this.auditLogger.log({
+      eventType: 'system_event',
+      action: 'app_added',
+      outcome: 'success',
+      details: {
+        appId: app.id,
+        appName: app.name,
+        port: app.port,
+        path: app.path
+      }
+    });
+
+    return app;
+  }
+
+  /**
+   * Remove a monitored app
+   */
+  async removeMonitoredApp(appId: string): Promise<boolean> {
+    const app = this.appMonitor.getApp(appId);
+    const result = this.appMonitor.removeApp(appId);
+
+    if (result && app) {
+      await this.auditLogger.log({
+        eventType: 'system_event',
+        action: 'app_removed',
+        outcome: 'success',
+        details: {
+          appId,
+          appName: app.name
+        }
+      });
+    }
+
+    return result;
+  }
+
+  /**
+   * Get a monitored app by ID
+   */
+  getMonitoredApp(appId: string): MonitoredApp | undefined {
+    return this.appMonitor.getApp(appId);
+  }
+
+  /**
+   * Get a monitored app by name
+   */
+  getMonitoredAppByName(name: string): MonitoredApp | undefined {
+    return this.appMonitor.getAppByName(name);
+  }
+
+  /**
+   * Get all monitored apps
+   */
+  getAllMonitoredApps(): MonitoredApp[] {
+    return this.appMonitor.getAllApps();
+  }
+
+  /**
+   * Update a monitored app configuration
+   */
+  async updateMonitoredApp(
+    appId: string,
+    updates: Partial<Omit<MonitoredApp, 'id' | 'createdAt'>>
+  ): Promise<MonitoredApp | undefined> {
+    const result = this.appMonitor.updateApp(appId, updates);
+
+    if (result) {
+      await this.auditLogger.log({
+        eventType: 'config_changed',
+        action: 'app_updated',
+        outcome: 'success',
+        details: {
+          appId,
+          appName: result.name,
+          updates: Object.keys(updates)
+        }
+      });
+    }
+
+    return result;
+  }
+
+  /**
+   * Check health of a specific app
+   */
+  async checkAppHealth(appId: string): Promise<AppHealthCheckResult> {
+    return this.appMonitor.checkAppHealth(appId);
+  }
+
+  /**
+   * Check health of all monitored apps
+   */
+  async checkAllAppsHealth(): Promise<AppHealthCheckResult[]> {
+    return this.appMonitor.checkAllApps();
+  }
+
+  /**
+   * Get last health check result for an app
+   */
+  getLastAppHealthCheck(appId: string): AppHealthCheckResult | undefined {
+    return this.appMonitor.getLastCheckResult(appId);
+  }
+
+  /**
+   * Get status history for an app
+   */
+  getAppStatusHistory(appId: string, limit?: number): AppStatusHistoryEntry[] {
+    return this.appMonitor.getStatusHistory(appId, limit);
+  }
+
+  /**
+   * Enable/disable app monitoring
+   */
+  setAppMonitoringEnabled(appId: string, enabled: boolean): boolean {
+    return this.appMonitor.setAppEnabled(appId, enabled);
+  }
+
+  /**
+   * Get app monitoring statistics
+   */
+  getAppMonitorStats(): AppMonitorStats {
+    return this.appMonitor.getStats();
+  }
+
+  /**
+   * Find apps by tag
+   */
+  findAppsByTag(tag: string): MonitoredApp[] {
+    return this.appMonitor.findAppsByTag(tag);
+  }
+
+  /**
+   * Get apps that are currently offline
+   */
+  getOfflineApps(): MonitoredApp[] {
+    return this.appMonitor.getOfflineApps();
+  }
+
+  /**
+   * Get apps that are in degraded state
+   */
+  getDegradedApps(): MonitoredApp[] {
+    return this.appMonitor.getDegradedApps();
+  }
+
+  /**
+   * Scan production directory for potential apps
+   */
+  async scanForApps(): Promise<Array<{
+    name: string;
+    path: string;
+    type: string;
+    hasPackageJson: boolean;
+    potentialPorts: number[];
+  }>> {
+    return this.appMonitor.scanForApps();
+  }
+
+  /**
+   * Get logs for a monitored app
+   */
+  async getAppLogs(appId: string, lines?: number): Promise<{
+    logs: string;
+    source: string;
+  }> {
+    return this.appMonitor.getAppLogs(appId, lines);
   }
 
   // ============================================================================

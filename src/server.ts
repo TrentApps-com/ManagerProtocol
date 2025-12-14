@@ -15,8 +15,7 @@ import {
   type Tool
 } from '@modelcontextprotocol/sdk/types.js';
 import { AgentSupervisor } from './supervisor/AgentSupervisor.js';
-import { AgentActionSchema, BusinessContextSchema } from './types/index.js';
-import { rulePresets, allBuiltInRules, defaultRateLimits } from './rules/index.js';
+import { rulePresets } from './rules/index.js';
 import { cssAnalyzer, type CSSAnalysisContext, type CSSRule } from './analyzers/index.js';
 
 // Initialize supervisor
@@ -661,6 +660,186 @@ Returns variable suggestions with recommended names.`,
       },
       required: ['rules']
     }
+  },
+
+  // ============================================================================
+  // APP MONITORING TOOLS
+  // ============================================================================
+  {
+    name: 'add_monitored_app',
+    description: `Add a production application to monitor. The app must exist in /mnt/prod/ or at the specified absolute path.
+
+Monitors:
+- Port availability (is the app listening?)
+- HTTP health endpoint (optional)
+- Process info (PID, memory, CPU, uptime)
+- Response times
+
+Returns the created app configuration with initial health check.`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Unique name for the app (e.g., "api-server", "web-app")' },
+        path: { type: 'string', description: 'Path to app directory (relative to /mnt/prod/ or absolute)' },
+        port: { type: 'number', minimum: 1, maximum: 65535, description: 'Port the app listens on' },
+        description: { type: 'string', description: 'Description of what the app does' },
+        healthEndpoint: { type: 'string', description: 'HTTP endpoint to check (e.g., "/health", "/api/health")' },
+        expectedResponseCode: { type: 'number', description: 'Expected HTTP status code (default: 200)' },
+        checkIntervalMs: { type: 'number', minimum: 5000, description: 'How often to check health in ms (default: 30000)' },
+        timeoutMs: { type: 'number', minimum: 1000, description: 'Health check timeout in ms (default: 5000)' },
+        tags: { type: 'array', items: { type: 'string' }, description: 'Tags for grouping/filtering apps' },
+        metadata: { type: 'object', description: 'Additional metadata' },
+        autoStart: { type: 'boolean', description: 'Start monitoring immediately (default: true)' }
+      },
+      required: ['name', 'path', 'port']
+    }
+  },
+  {
+    name: 'remove_monitored_app',
+    description: 'Remove an app from monitoring',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        appId: { type: 'string', description: 'ID of the app to remove' }
+      },
+      required: ['appId']
+    }
+  },
+  {
+    name: 'list_monitored_apps',
+    description: 'List all monitored applications with their current status',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        includeHealth: { type: 'boolean', description: 'Include last health check results (default: true)' },
+        tag: { type: 'string', description: 'Filter by tag' }
+      }
+    }
+  },
+  {
+    name: 'get_app_status',
+    description: 'Get detailed status for a specific app including process info and health history',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        appId: { type: 'string', description: 'ID of the app' },
+        appName: { type: 'string', description: 'Name of the app (alternative to appId)' },
+        historyLimit: { type: 'number', description: 'Number of history entries to include (default: 10)' }
+      }
+    }
+  },
+  {
+    name: 'check_app_health',
+    description: 'Perform an immediate health check on a specific app',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        appId: { type: 'string', description: 'ID of the app' },
+        appName: { type: 'string', description: 'Name of the app (alternative to appId)' }
+      }
+    }
+  },
+  {
+    name: 'check_all_apps_health',
+    description: 'Perform health checks on all monitored apps and return summary',
+    inputSchema: {
+      type: 'object',
+      properties: {}
+    }
+  },
+  {
+    name: 'get_app_monitor_stats',
+    description: 'Get overall app monitoring statistics',
+    inputSchema: {
+      type: 'object',
+      properties: {}
+    }
+  },
+  {
+    name: 'update_monitored_app',
+    description: 'Update configuration for a monitored app',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        appId: { type: 'string', description: 'ID of the app to update' },
+        updates: {
+          type: 'object',
+          description: 'Fields to update',
+          properties: {
+            name: { type: 'string' },
+            description: { type: 'string' },
+            healthEndpoint: { type: 'string' },
+            expectedResponseCode: { type: 'number' },
+            checkIntervalMs: { type: 'number', minimum: 5000 },
+            timeoutMs: { type: 'number', minimum: 1000 },
+            enabled: { type: 'boolean' },
+            tags: { type: 'array', items: { type: 'string' } },
+            metadata: { type: 'object' }
+          }
+        }
+      },
+      required: ['appId', 'updates']
+    }
+  },
+  {
+    name: 'set_app_monitoring_enabled',
+    description: 'Enable or disable monitoring for an app',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        appId: { type: 'string', description: 'ID of the app' },
+        enabled: { type: 'boolean', description: 'Whether to enable monitoring' }
+      },
+      required: ['appId', 'enabled']
+    }
+  },
+  {
+    name: 'get_offline_apps',
+    description: 'Get list of apps that are currently offline',
+    inputSchema: {
+      type: 'object',
+      properties: {}
+    }
+  },
+  {
+    name: 'get_degraded_apps',
+    description: 'Get list of apps that are in degraded state (slow response or partial failure)',
+    inputSchema: {
+      type: 'object',
+      properties: {}
+    }
+  },
+  {
+    name: 'scan_prod_apps',
+    description: 'Scan /mnt/prod/ directory for potential apps that can be monitored',
+    inputSchema: {
+      type: 'object',
+      properties: {}
+    }
+  },
+  {
+    name: 'get_app_logs',
+    description: 'Get recent logs for a monitored app (from PM2, journalctl, or log files)',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        appId: { type: 'string', description: 'ID of the app' },
+        appName: { type: 'string', description: 'Name of the app (alternative to appId)' },
+        lines: { type: 'number', minimum: 1, maximum: 500, description: 'Number of log lines to retrieve (default: 50)' }
+      }
+    }
+  },
+  {
+    name: 'get_app_status_history',
+    description: 'Get status history for an app to see uptime patterns',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        appId: { type: 'string', description: 'ID of the app' },
+        appName: { type: 'string', description: 'Name of the app (alternative to appId)' },
+        limit: { type: 'number', minimum: 1, maximum: 1000, description: 'Number of history entries (default: 100)' }
+      }
+    }
   }
 ];
 
@@ -708,6 +887,18 @@ server.setRequestHandler(ListResourcesRequestSchema, async () => ({
       uri: 'supervisor://stats',
       name: 'Supervisor Statistics',
       description: 'Current audit and approval statistics',
+      mimeType: 'application/json'
+    },
+    {
+      uri: 'supervisor://apps',
+      name: 'Monitored Applications',
+      description: 'All monitored production applications with their current status',
+      mimeType: 'application/json'
+    },
+    {
+      uri: 'supervisor://apps/stats',
+      name: 'App Monitor Statistics',
+      description: 'Overall app monitoring statistics',
       mimeType: 'application/json'
     }
   ]
@@ -764,6 +955,30 @@ server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
             audit: supervisor.getAuditStats(),
             approvals: supervisor.getApprovalStats()
           }, null, 2)
+        }]
+      };
+
+    case 'supervisor://apps': {
+      const apps = supervisor.getAllMonitoredApps();
+      const appsWithHealth = apps.map(app => ({
+        ...app,
+        currentStatus: supervisor.getLastAppHealthCheck(app.id)
+      }));
+      return {
+        contents: [{
+          uri,
+          mimeType: 'application/json',
+          text: JSON.stringify(appsWithHealth, null, 2)
+        }]
+      };
+    }
+
+    case 'supervisor://apps/stats':
+      return {
+        contents: [{
+          uri,
+          mimeType: 'application/json',
+          text: JSON.stringify(supervisor.getAppMonitorStats(), null, 2)
         }]
       };
 
@@ -1123,6 +1338,185 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
             }, null, 2)
           }]
         };
+      }
+
+      // App monitoring tools
+      case 'add_monitored_app': {
+        const result = await supervisor.addMonitoredApp(args as any);
+        const healthCheck = supervisor.getLastAppHealthCheck(result.id);
+        return {
+          content: [{
+            type: 'text',
+            text: JSON.stringify({ app: result, initialHealth: healthCheck }, null, 2)
+          }]
+        };
+      }
+
+      case 'remove_monitored_app': {
+        const removed = await supervisor.removeMonitoredApp(args?.appId as string);
+        return { content: [{ type: 'text', text: JSON.stringify({ success: removed }) }] };
+      }
+
+      case 'list_monitored_apps': {
+        let apps = supervisor.getAllMonitoredApps();
+        if (args?.tag) {
+          apps = supervisor.findAppsByTag(args.tag as string);
+        }
+
+        const includeHealth = args?.includeHealth !== false;
+        const result = apps.map(app => {
+          const base: any = { ...app };
+          if (includeHealth) {
+            base.lastHealth = supervisor.getLastAppHealthCheck(app.id);
+          }
+          return base;
+        });
+
+        return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+      }
+
+      case 'get_app_status': {
+        let app = args?.appId
+          ? supervisor.getMonitoredApp(args.appId as string)
+          : args?.appName
+            ? supervisor.getMonitoredAppByName(args.appName as string)
+            : undefined;
+
+        if (!app) {
+          return {
+            content: [{ type: 'text', text: JSON.stringify({ error: 'App not found' }) }],
+            isError: true
+          };
+        }
+
+        const healthCheck = supervisor.getLastAppHealthCheck(app.id);
+        const history = supervisor.getAppStatusHistory(app.id, args?.historyLimit as number || 10);
+
+        return {
+          content: [{
+            type: 'text',
+            text: JSON.stringify({
+              app,
+              currentHealth: healthCheck,
+              recentHistory: history
+            }, null, 2)
+          }]
+        };
+      }
+
+      case 'check_app_health': {
+        let appId = args?.appId as string;
+        if (!appId && args?.appName) {
+          const app = supervisor.getMonitoredAppByName(args.appName as string);
+          if (app) appId = app.id;
+        }
+
+        if (!appId) {
+          return {
+            content: [{ type: 'text', text: JSON.stringify({ error: 'App not found' }) }],
+            isError: true
+          };
+        }
+
+        const result = await supervisor.checkAppHealth(appId);
+        return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+      }
+
+      case 'check_all_apps_health': {
+        const results = await supervisor.checkAllAppsHealth();
+        const stats = supervisor.getAppMonitorStats();
+        return {
+          content: [{
+            type: 'text',
+            text: JSON.stringify({ stats, results }, null, 2)
+          }]
+        };
+      }
+
+      case 'get_app_monitor_stats': {
+        const stats = supervisor.getAppMonitorStats();
+        return { content: [{ type: 'text', text: JSON.stringify(stats, null, 2) }] };
+      }
+
+      case 'update_monitored_app': {
+        const result = await supervisor.updateMonitoredApp(
+          args?.appId as string,
+          args?.updates as any
+        );
+        if (!result) {
+          return {
+            content: [{ type: 'text', text: JSON.stringify({ error: 'App not found' }) }],
+            isError: true
+          };
+        }
+        return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+      }
+
+      case 'set_app_monitoring_enabled': {
+        const success = supervisor.setAppMonitoringEnabled(
+          args?.appId as string,
+          args?.enabled as boolean
+        );
+        return { content: [{ type: 'text', text: JSON.stringify({ success }) }] };
+      }
+
+      case 'get_offline_apps': {
+        const offlineApps = supervisor.getOfflineApps();
+        const result = offlineApps.map(app => ({
+          ...app,
+          lastHealth: supervisor.getLastAppHealthCheck(app.id)
+        }));
+        return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+      }
+
+      case 'get_degraded_apps': {
+        const degradedApps = supervisor.getDegradedApps();
+        const result = degradedApps.map(app => ({
+          ...app,
+          lastHealth: supervisor.getLastAppHealthCheck(app.id)
+        }));
+        return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+      }
+
+      case 'scan_prod_apps': {
+        const potentialApps = await supervisor.scanForApps();
+        return { content: [{ type: 'text', text: JSON.stringify(potentialApps, null, 2) }] };
+      }
+
+      case 'get_app_logs': {
+        let appId = args?.appId as string;
+        if (!appId && args?.appName) {
+          const app = supervisor.getMonitoredAppByName(args.appName as string);
+          if (app) appId = app.id;
+        }
+
+        if (!appId) {
+          return {
+            content: [{ type: 'text', text: JSON.stringify({ error: 'App not found' }) }],
+            isError: true
+          };
+        }
+
+        const logs = await supervisor.getAppLogs(appId, args?.lines as number || 50);
+        return { content: [{ type: 'text', text: JSON.stringify(logs, null, 2) }] };
+      }
+
+      case 'get_app_status_history': {
+        let appId = args?.appId as string;
+        if (!appId && args?.appName) {
+          const app = supervisor.getMonitoredAppByName(args.appName as string);
+          if (app) appId = app.id;
+        }
+
+        if (!appId) {
+          return {
+            content: [{ type: 'text', text: JSON.stringify({ error: 'App not found' }) }],
+            isError: true
+          };
+        }
+
+        const history = supervisor.getAppStatusHistory(appId, args?.limit as number || 100);
+        return { content: [{ type: 'text', text: JSON.stringify(history, null, 2) }] };
       }
 
       default:

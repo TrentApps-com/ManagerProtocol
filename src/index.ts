@@ -25,7 +25,10 @@ export {
   type AuditLoggerOptions,
   ApprovalManager,
   approvalManager,
-  type ApprovalManagerOptions
+  type ApprovalManagerOptions,
+  AppMonitor,
+  appMonitor,
+  type AppMonitorOptions
 } from './engine/index.js';
 
 // Built-in rules

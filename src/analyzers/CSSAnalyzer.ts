@@ -78,28 +78,8 @@ const GLOBAL_PROPERTY_INDICATORS = [
   'animation'
 ];
 
-/**
- * Utility class patterns (Tailwind-like)
- */
-const UTILITY_PATTERNS: Record<string, RegExp> = {
-  margin: /^m[trblxy]?-/,
-  padding: /^p[trblxy]?-/,
-  display: /^(flex|grid|block|inline|hidden)$/,
-  position: /^(relative|absolute|fixed|sticky)$/,
-  width: /^w-/,
-  height: /^h-/,
-  text: /^text-/,
-  font: /^font-/,
-  bg: /^bg-/,
-  border: /^border-/,
-  rounded: /^rounded-/,
-  shadow: /^shadow-/,
-  gap: /^gap-/
-};
-
 export class CSSAnalyzer {
   private knownUtilityClasses: Set<string> = new Set();
-  private globalPatterns: CSSRule[] = [];
 
   constructor() {
     this.initializeKnownPatterns();
@@ -701,7 +681,7 @@ export class CSSAnalyzer {
   }
 
   private generateSummary(
-    rule: CSSRule,
+    _rule: CSSRule,
     suggestions: CSSSuggestion[],
     duplicates: CSSRule[],
     shouldExternalize: boolean,

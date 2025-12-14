@@ -239,7 +239,7 @@ export class RateLimiter {
   private getOrCreateBucket(
     key: string,
     now: number,
-    windowMs: number
+    _windowMs: number
   ): RateLimitBucket {
     let bucket = this.buckets.get(key);
 
