@@ -2,14 +2,19 @@
  * Enterprise Agent Supervisor - Rate Limiter
  *
  * Token bucket rate limiting with multiple scopes and configurations.
+ * Uses extracted utilities from src/utils/rate-limiting.ts for
+ * bucket key building and sliding window logic.
  */
 
 import type { RateLimitConfig, RateLimitState, ActionCategory } from '../types/index.js';
+import { buildBucketKey, SlidingWindow, type BucketIdentifiers, type BucketScope } from '../utils/rate-limiting.js';
 
+/**
+ * Internal bucket structure using SlidingWindow for time tracking
+ */
 interface RateLimitBucket {
-  count: number;
-  windowStart: number;
-  burstCount: number;
+  window: SlidingWindow;
+  key: string;
 }
 
 export class RateLimiter {
@@ -66,48 +71,39 @@ export class RateLimiter {
         }
       }
 
-      // Build bucket key based on scope
-      const bucketKey = this.buildBucketKey(configId, config.scope, params);
-      const bucket = this.getOrCreateBucket(bucketKey, now, config.windowMs);
+      // Build bucket key using extracted utility
+      const identifiers = this.toIdentifiers(params);
+      const bucketKey = buildBucketKey(config.scope as BucketScope, identifiers, configId);
+      const bucket = this.getOrCreateBucket(bucketKey, config);
 
-      // Check if within window
-      // Window is active: windowStart <= now < windowStart + windowMs
-      // Window expires when: now - windowStart >= windowMs
-      if (now - bucket.windowStart >= config.windowMs) {
-        // Reset window: boundary is exclusive on upper bound
-        bucket.count = 0;
-        bucket.windowStart = now;
-        bucket.burstCount = 0;
-      }
-
-      // Check limits
-      if (bucket.count >= config.maxRequests) {
-        const resetAt = new Date(bucket.windowStart + config.windowMs);
+      // Check if window can accept using SlidingWindow
+      if (!bucket.window.canAccept(now)) {
+        const stats = bucket.window.getStats(now);
         return {
           allowed: false,
           limitId: configId,
           state: {
             key: bucketKey,
-            count: bucket.count,
-            windowStart: bucket.windowStart,
+            count: stats.count,
+            windowStart: stats.windowStart,
             remaining: 0,
-            resetAt: resetAt.toISOString()
+            resetAt: stats.resetAtISO
           }
         };
       }
 
       // Check burst limit if configured
-      if (config.burstLimit && bucket.burstCount >= config.burstLimit) {
-        const resetAt = new Date(bucket.windowStart + config.windowMs);
+      if (config.burstLimit && !bucket.window.canAcceptBurst(now)) {
+        const stats = bucket.window.getStats(now);
         return {
           allowed: false,
           limitId: configId,
           state: {
             key: bucketKey,
-            count: bucket.count,
-            windowStart: bucket.windowStart,
+            count: stats.count,
+            windowStart: stats.windowStart,
             remaining: 0,
-            resetAt: resetAt.toISOString()
+            resetAt: stats.resetAtISO
           }
         };
       }
@@ -137,19 +133,12 @@ export class RateLimiter {
         }
       }
 
-      const bucketKey = this.buildBucketKey(configId, config.scope, params);
-      const bucket = this.getOrCreateBucket(bucketKey, now, config.windowMs);
+      const identifiers = this.toIdentifiers(params);
+      const bucketKey = buildBucketKey(config.scope as BucketScope, identifiers, configId);
+      const bucket = this.getOrCreateBucket(bucketKey, config);
 
-      // Reset if window expired
-      // Window boundary: when now - windowStart >= windowMs, the window has expired
-      if (now - bucket.windowStart >= config.windowMs) {
-        bucket.count = 0;
-        bucket.windowStart = now;
-        bucket.burstCount = 0;
-      }
-
-      bucket.count++;
-      bucket.burstCount++;
+      // Record the request in the sliding window
+      bucket.window.record(now);
     }
   }
 
@@ -165,7 +154,8 @@ export class RateLimiter {
     if (!config) return null;
 
     const now = Date.now();
-    const bucketKey = this.buildBucketKey(configId, config.scope, params);
+    const identifiers = this.toIdentifiers(params);
+    const bucketKey = buildBucketKey(config.scope as BucketScope, identifiers, configId);
     const bucket = this.buckets.get(bucketKey);
 
     if (!bucket) {
@@ -178,24 +168,14 @@ export class RateLimiter {
       };
     }
 
-    // Check if window has expired
-    // Window expires when: now - windowStart >= windowMs
-    if (now - bucket.windowStart >= config.windowMs) {
-      return {
-        key: bucketKey,
-        count: 0,
-        windowStart: now,
-        remaining: config.maxRequests,
-        resetAt: new Date(now + config.windowMs).toISOString()
-      };
-    }
+    const stats = bucket.window.getStats(now);
 
     return {
       key: bucketKey,
-      count: bucket.count,
-      windowStart: bucket.windowStart,
-      remaining: Math.max(0, config.maxRequests - bucket.count),
-      resetAt: new Date(bucket.windowStart + config.windowMs).toISOString()
+      count: stats.count,
+      windowStart: stats.windowStart,
+      remaining: stats.remaining,
+      resetAt: stats.resetAtISO
     };
   }
 
@@ -214,49 +194,37 @@ export class RateLimiter {
   }
 
   /**
-   * Build a bucket key based on scope
+   * Convert params to BucketIdentifiers for the utility function
    */
-  private buildBucketKey(
-    configId: string,
-    scope: RateLimitConfig['scope'],
-    params: {
-      agentId?: string;
-      sessionId?: string;
-      userId?: string;
-      actionType?: string;
-    }
-  ): string {
-    switch (scope) {
-      case 'global':
-        return `${configId}:global`;
-      case 'agent':
-        return `${configId}:agent:${params.agentId || 'unknown'}`;
-      case 'session':
-        return `${configId}:session:${params.sessionId || 'unknown'}`;
-      case 'user':
-        return `${configId}:user:${params.userId || 'unknown'}`;
-      case 'action_type':
-        return `${configId}:action:${params.actionType || 'unknown'}`;
-      default:
-        return `${configId}:unknown`;
-    }
+  private toIdentifiers(params: {
+    agentId?: string;
+    sessionId?: string;
+    userId?: string;
+    actionType?: string;
+  }): BucketIdentifiers {
+    return {
+      agentId: params.agentId,
+      sessionId: params.sessionId,
+      userId: params.userId,
+      actionType: params.actionType
+    };
   }
 
   /**
-   * Get or create a bucket
+   * Get or create a bucket with SlidingWindow
    */
-  private getOrCreateBucket(
-    key: string,
-    now: number,
-    _windowMs: number
-  ): RateLimitBucket {
+  private getOrCreateBucket(key: string, config: RateLimitConfig): RateLimitBucket {
     let bucket = this.buckets.get(key);
 
     if (!bucket) {
       bucket = {
-        count: 0,
-        windowStart: now,
-        burstCount: 0
+        key,
+        window: new SlidingWindow({
+          windowMs: config.windowMs,
+          maxRequests: config.maxRequests,
+          burstLimit: config.burstLimit,
+          algorithm: 'fixed' // Use fixed window for consistent behavior with original implementation
+        })
       };
       this.buckets.set(key, bucket);
     }
@@ -290,9 +258,10 @@ export class RateLimiter {
     let removedCount = 0;
 
     for (const [key, bucket] of this.buckets.entries()) {
+      const state = bucket.window.getState();
       // Off-by-one fix: use consistent >= comparison for boundary calculation
       // Window boundary semantics: now - windowStart >= threshold means expired
-      if (now - bucket.windowStart >= maxWindowMs * 2) {
+      if (now - state.windowStart >= maxWindowMs * 2) {
         this.buckets.delete(key);
         removedCount++;
       }
