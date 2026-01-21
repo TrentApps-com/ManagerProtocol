@@ -1,0 +1,5 @@
+# Code Owners for ManagerProtocol
+# These owners will be requested for review when someone opens a pull request.
+
+# Global rule - Trent3759 owns everything
+* @Trent3759
