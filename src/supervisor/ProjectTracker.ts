@@ -15,6 +15,75 @@ import fs from 'fs';
 
 const execAsync = promisify(exec);
 
+/**
+ * Cache entry with TTL support
+ */
+interface CacheEntry<T> {
+  value: T;
+  expiresAt: number;
+}
+
+/**
+ * Simple in-memory cache with TTL
+ */
+class GitCache {
+  private cache: Map<string, CacheEntry<any>> = new Map();
+  private defaultTTL: number;
+
+  constructor(defaultTTLMs: number = 60000) { // Default 60 seconds
+    this.defaultTTL = defaultTTLMs;
+  }
+
+  get<T>(key: string): T | undefined {
+    const entry = this.cache.get(key);
+    if (!entry) return undefined;
+
+    if (Date.now() > entry.expiresAt) {
+      this.cache.delete(key);
+      return undefined;
+    }
+
+    return entry.value as T;
+  }
+
+  set<T>(key: string, value: T, ttlMs?: number): void {
+    this.cache.set(key, {
+      value,
+      expiresAt: Date.now() + (ttlMs ?? this.defaultTTL)
+    });
+  }
+
+  delete(key: string): void {
+    this.cache.delete(key);
+  }
+
+  clear(): void {
+    this.cache.clear();
+  }
+
+  /**
+   * Clean up expired entries
+   */
+  cleanup(): void {
+    const now = Date.now();
+    for (const [key, entry] of this.cache.entries()) {
+      if (now > entry.expiresAt) {
+        this.cache.delete(key);
+      }
+    }
+  }
+}
+
+/**
+ * Git information structure for caching
+ */
+interface GitInfo {
+  branch?: string;
+  remote?: string;
+  repo?: string;
+  commit?: string;
+}
+
 export interface AgentActivity {
   agentId: string;
   sessionId: string;
@@ -92,11 +161,18 @@ class ProjectTracker {
   private agentActivityIndex: Map<string, AgentActivity[]> = new Map(); // agentId -> activities (performance index)
   private agentToProject: Map<string, string> = new Map(); // agentId -> projectId
 
+  // Git data cache with 60-second TTL to prevent repeated blocking calls
+  private gitCache: GitCache = new GitCache(60000);
+
+  // Track pending git operations to prevent duplicate concurrent calls
+  private pendingGitOps: Map<string, Promise<GitInfo>> = new Map();
+
   // Configuration
   private maxActivitiesPerProject = 1000;
   private activityRetentionMs = 24 * 60 * 60 * 1000; // 24 hours
   private agentIdleTimeoutMs = 5 * 60 * 1000; // 5 minutes of inactivity = idle
   private agentDisconnectTimeoutMs = 30 * 60 * 1000; // 30 minutes = disconnected
+  private gitCacheTTLMs = 60000; // 60 seconds cache for git data
 
   /**
    * Register or update a project
@@ -585,6 +661,9 @@ class ProjectTracker {
         agent.status = 'idle';
       }
     }
+
+    // Clean up expired git cache entries
+    this.gitCache.cleanup();
   }
 
   /**
@@ -633,63 +712,117 @@ class ProjectTracker {
   }
 
   /**
-   * Update git information for a project with proper error handling
+   * Update git information for a project with caching and deduplication
+   * Uses in-memory cache with TTL to avoid repeated git calls
    */
   private async updateGitInfo(project: ProjectInfo, projectPath: string): Promise<void> {
-    const timeout = 5000; // 5 second timeout for git commands
+    const cacheKey = `git:${projectPath}`;
+
+    // Check cache first
+    const cached = this.gitCache.get<GitInfo>(cacheKey);
+    if (cached) {
+      this.applyGitInfo(project, cached);
+      return;
+    }
+
+    // Check if there's already a pending operation for this path
+    const pending = this.pendingGitOps.get(cacheKey);
+    if (pending) {
+      const gitInfo = await pending;
+      this.applyGitInfo(project, gitInfo);
+      return;
+    }
+
+    // Start new git fetch operation
+    const fetchPromise = this.fetchGitInfo(projectPath);
+    this.pendingGitOps.set(cacheKey, fetchPromise);
 
     try {
-      // Get branch
-      try {
-        const { stdout: branch } = await execAsync('git rev-parse --abbrev-ref HEAD', {
-          cwd: projectPath,
-          timeout
-        });
-        if (branch && branch.trim()) {
-          project.gitBranch = branch.trim();
-        }
-      } catch (branchErr) {
-        console.warn(`[ProjectTracker] Failed to get git branch for ${projectPath}:`, (branchErr as Error).message);
-      }
+      const gitInfo = await fetchPromise;
 
-      // Get remote URL
-      try {
-        const { stdout: remote } = await execAsync('git remote get-url origin', {
-          cwd: projectPath,
-          timeout
-        });
-        if (remote && remote.trim()) {
-          project.gitRemote = remote.trim();
+      // Cache the result
+      this.gitCache.set(cacheKey, gitInfo, this.gitCacheTTLMs);
 
-          // Extract repo name from remote URL
-          const match = remote.trim().match(/([^/]+\/[^/]+?)(\.git)?$/);
-          if (match) {
-            project.gitRepo = match[1].replace('.git', '');
-          }
-        }
-      } catch (remoteErr: any) {
-        // Remote might not exist (not pushed yet) - this is normal, don't log
-        if (remoteErr.code !== 128) { // Git error code 128 = no remote
-          console.warn(`[ProjectTracker] Failed to get git remote for ${projectPath}:`, remoteErr.message);
-        }
-      }
-
-      // Get latest commit
-      try {
-        const { stdout: commit } = await execAsync('git rev-parse --short HEAD', {
-          cwd: projectPath,
-          timeout
-        });
-        if (commit && commit.trim()) {
-          project.gitCommit = commit.trim();
-        }
-      } catch (commitErr) {
-        console.warn(`[ProjectTracker] Failed to get git commit for ${projectPath}:`, (commitErr as Error).message);
-      }
-    } catch (err) {
-      // Overall git failure - log for debugging
-      console.error(`[ProjectTracker] Git info update failed for ${projectPath}:`, err);
+      // Apply to project
+      this.applyGitInfo(project, gitInfo);
+    } finally {
+      // Clean up pending operation
+      this.pendingGitOps.delete(cacheKey);
     }
+  }
+
+  /**
+   * Apply git info to a project
+   */
+  private applyGitInfo(project: ProjectInfo, gitInfo: GitInfo): void {
+    if (gitInfo.branch) project.gitBranch = gitInfo.branch;
+    if (gitInfo.remote) project.gitRemote = gitInfo.remote;
+    if (gitInfo.repo) project.gitRepo = gitInfo.repo;
+    if (gitInfo.commit) project.gitCommit = gitInfo.commit;
+  }
+
+  /**
+   * Fetch git information asynchronously with proper error handling
+   * Runs all git commands in parallel for better performance
+   */
+  private async fetchGitInfo(projectPath: string): Promise<GitInfo> {
+    const timeout = 5000; // 5 second timeout for git commands
+    const gitInfo: GitInfo = {};
+
+    // Run all git commands in parallel
+    const [branchResult, remoteResult, commitResult] = await Promise.allSettled([
+      execAsync('git rev-parse --abbrev-ref HEAD', { cwd: projectPath, timeout }),
+      execAsync('git remote get-url origin', { cwd: projectPath, timeout }),
+      execAsync('git rev-parse --short HEAD', { cwd: projectPath, timeout })
+    ]);
+
+    // Process branch result
+    if (branchResult.status === 'fulfilled' && branchResult.value.stdout?.trim()) {
+      gitInfo.branch = branchResult.value.stdout.trim();
+    } else if (branchResult.status === 'rejected') {
+      console.warn(`[ProjectTracker] Failed to get git branch for ${projectPath}:`, (branchResult.reason as Error).message);
+    }
+
+    // Process remote result
+    if (remoteResult.status === 'fulfilled' && remoteResult.value.stdout?.trim()) {
+      gitInfo.remote = remoteResult.value.stdout.trim();
+
+      // Extract repo name from remote URL
+      const match = gitInfo.remote.match(/([^/]+\/[^/]+?)(\.git)?$/);
+      if (match) {
+        gitInfo.repo = match[1].replace('.git', '');
+      }
+    } else if (remoteResult.status === 'rejected') {
+      // Remote might not exist (not pushed yet) - this is normal, don't log unless unexpected error
+      const err = remoteResult.reason as any;
+      if (err.code !== 128) { // Git error code 128 = no remote
+        console.warn(`[ProjectTracker] Failed to get git remote for ${projectPath}:`, err.message);
+      }
+    }
+
+    // Process commit result
+    if (commitResult.status === 'fulfilled' && commitResult.value.stdout?.trim()) {
+      gitInfo.commit = commitResult.value.stdout.trim();
+    } else if (commitResult.status === 'rejected') {
+      console.warn(`[ProjectTracker] Failed to get git commit for ${projectPath}:`, (commitResult.reason as Error).message);
+    }
+
+    return gitInfo;
+  }
+
+  /**
+   * Invalidate git cache for a specific project (useful after git operations)
+   */
+  invalidateGitCache(projectPath: string): void {
+    const cacheKey = `git:${projectPath}`;
+    this.gitCache.delete(cacheKey);
+  }
+
+  /**
+   * Clear all git caches
+   */
+  clearGitCache(): void {
+    this.gitCache.clear();
   }
 
   /**
