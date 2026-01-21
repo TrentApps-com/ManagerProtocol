@@ -357,6 +357,34 @@ Built-in support for:
 
 ---
 
+## Security & Deployment
+
+### Local Usage (Default)
+
+The Agent Supervisor MCP server is designed to run **locally** alongside your AI agent. When configured as an MCP server in Claude Desktop or other MCP clients, it communicates via stdio (standard input/output), not HTTP.
+
+**Key points:**
+- **No CORS required** - The MCP protocol uses stdio for communication, not HTTP requests
+- **No network exposure** - The server doesn't listen on any network ports by default
+- **Process isolation** - Runs as a child process of the MCP client
+
+### Dashboard (Optional)
+
+The optional HTTP dashboard (for monitoring and approvals) runs on `localhost:3100` by default:
+- Only accessible from the local machine
+- Not exposed to the network
+- For remote access, use SSH tunneling or a reverse proxy with authentication
+
+### Production Considerations
+
+If deploying in a production environment with network access:
+1. **Add authentication** - Implement your own auth layer (OAuth, API keys, etc.)
+2. **Use a reverse proxy** - Put nginx/Caddy in front with TLS and auth
+3. **Network isolation** - Run in a private network or VPC
+4. **Audit logging** - Enable comprehensive audit logging (built-in)
+
+---
+
 ## Architecture
 
 ```
