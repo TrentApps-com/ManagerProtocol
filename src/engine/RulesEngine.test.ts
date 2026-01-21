@@ -285,7 +285,11 @@ describe('RulesEngine', () => {
       };
 
       const result = engine.evaluateAction(action);
-      expect(result.riskScore).toBe(70);
+      // Task #57: Risk is now calculated as priority-weighted average, not sum
+      // Two rules with priority 500 (multiplier 6) and riskWeight 35 each:
+      // weightedRiskSum = 35*6 + 35*6 = 420, totalPriorityWeight = 12
+      // riskScore = 420/12 = 35
+      expect(result.riskScore).toBe(35);
     });
 
     it('should cap risk score at 100', () => {
@@ -295,22 +299,22 @@ describe('RulesEngine', () => {
           name: 'Rule 1',
           type: 'security',
           enabled: true,
-          priority: 500,
+          priority: 1000,  // High priority
           conditions: [],
           conditionLogic: 'all',
           actions: [{ type: 'warn' }],
-          riskWeight: 60
+          riskWeight: 100  // Max risk weight
         },
         {
           id: 'rule-2',
           name: 'Rule 2',
           type: 'security',
           enabled: true,
-          priority: 500,
+          priority: 1000,
           conditions: [],
           conditionLogic: 'all',
           actions: [{ type: 'warn' }],
-          riskWeight: 60
+          riskWeight: 100
         }
       ]);
 
@@ -320,6 +324,7 @@ describe('RulesEngine', () => {
       };
 
       const result = engine.evaluateAction(action);
+      // Task #57: Even with max risk weights, capped at 100
       expect(result.riskScore).toBe(100);
     });
   });

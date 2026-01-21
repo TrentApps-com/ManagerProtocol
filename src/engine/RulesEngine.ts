@@ -15,8 +15,10 @@ import type {
   RiskLevel,
   ActionStatus,
   BusinessRulesResult,
-  RuleAction
+  RuleAction,
+  DependencyValidationResult
 } from '../types/index.js';
+import { RuleDependencyAnalyzer } from './RuleDependencyAnalyzer.js';
 
 /**
  * Task #34: Condition evaluation cost weights for optimization
@@ -46,8 +48,16 @@ export class RulesEngine {
   private regexCache: Map<string, RegExp> = new Map();
   // Task #34: Cache for optimized 'in' operator Sets - keyed by JSON.stringify of value array
   private inOperatorSetCache: Map<string, Set<unknown>> = new Map();
+  // Task #37: Dependency analyzer for rule ordering
+  private dependencyAnalyzer: RuleDependencyAnalyzer;
+  // Task #37: Cache for dependency-sorted execution order
+  private executionOrderCache: string[] | null = null;
+  // Task #37: Whether to respect rule dependencies in evaluation order
+  private respectDependencies: boolean = true;
 
-  constructor() {
+  constructor(options?: { respectDependencies?: boolean }) {
+    this.dependencyAnalyzer = new RuleDependencyAnalyzer();
+    this.respectDependencies = options?.respectDependencies ?? true;
     this.registerDefaultEvaluators();
   }
 
@@ -84,12 +94,14 @@ export class RulesEngine {
   /**
    * Task #53: Clear the evaluator cache
    * Task #34: Also clear regex and 'in' operator caches
+   * Task #37: Also clear execution order cache
    * Called when rules are modified to ensure fresh compilation
    */
   private clearEvaluatorCache(): void {
     this.evaluatorCache.clear();
     this.regexCache.clear();
     this.inOperatorSetCache.clear();
+    this.executionOrderCache = null;
   }
 
   /**
@@ -102,12 +114,57 @@ export class RulesEngine {
   /**
    * Get enabled rules sorted by priority (higher priority first)
    * Task #39: In strict mode, filters out deprecated rules
+   * Task #37: When respectDependencies is true, returns rules in dependency-aware order
    */
   getActiveRules(strictMode: boolean = false): BusinessRule[] {
-    return this.getRules()
+    const enabledRules = this.getRules()
       .filter(rule => rule.enabled)
-      .filter(rule => !strictMode || !rule.deprecated)
-      .sort((a, b) => b.priority - a.priority);
+      .filter(rule => !strictMode || !rule.deprecated);
+
+    // Task #37: Return rules in dependency order if enabled
+    if (this.respectDependencies) {
+      return this.getDependencySortedRules(enabledRules);
+    }
+
+    // Default: sort by priority (higher priority first)
+    return enabledRules.sort((a, b) => b.priority - a.priority);
+  }
+
+  /**
+   * Task #37: Get rules sorted by dependency order (dependencies first, then by priority)
+   */
+  private getDependencySortedRules(rules: BusinessRule[]): BusinessRule[] {
+    // Use cached execution order if available
+    if (this.executionOrderCache) {
+      const ruleMap = new Map<string, BusinessRule>();
+      for (const rule of rules) {
+        ruleMap.set(rule.id, rule);
+      }
+
+      const orderedRules: BusinessRule[] = [];
+      for (const ruleId of this.executionOrderCache) {
+        const rule = ruleMap.get(ruleId);
+        if (rule) {
+          orderedRules.push(rule);
+        }
+      }
+
+      // Add any rules not in cache (shouldn't happen, but safety)
+      const cachedIds = new Set(this.executionOrderCache);
+      for (const rule of rules) {
+        if (!cachedIds.has(rule.id)) {
+          orderedRules.push(rule);
+        }
+      }
+
+      return orderedRules;
+    }
+
+    // Calculate and cache execution order
+    const sortedRules = this.dependencyAnalyzer.getSortedRulesForExecution(rules);
+    this.executionOrderCache = sortedRules.map(r => r.id);
+
+    return sortedRules;
   }
 
   /**
@@ -178,6 +235,59 @@ export class RulesEngine {
       return true; // No version requirement
     }
     return this.compareVersions(currentVersion, rule.minVersion) >= 0;
+  }
+
+  /**
+   * Task #37: Validate all rule dependencies
+   * Returns validation result with errors and warnings
+   */
+  validateDependencies(): DependencyValidationResult {
+    return this.dependencyAnalyzer.validateDependencies(this.getRules());
+  }
+
+  /**
+   * Task #37: Get the dependency analyzer for advanced analysis
+   */
+  getDependencyAnalyzer(): RuleDependencyAnalyzer {
+    return this.dependencyAnalyzer;
+  }
+
+  /**
+   * Task #37: Enable or disable dependency-aware rule ordering
+   */
+  setRespectDependencies(enabled: boolean): void {
+    if (this.respectDependencies !== enabled) {
+      this.respectDependencies = enabled;
+      this.executionOrderCache = null; // Clear cache when toggling
+    }
+  }
+
+  /**
+   * Task #37: Check if dependency-aware ordering is enabled
+   */
+  isRespectingDependencies(): boolean {
+    return this.respectDependencies;
+  }
+
+  /**
+   * Task #37: Get rules that depend on a specific rule
+   */
+  getRuleDependents(ruleId: string): BusinessRule[] {
+    return this.dependencyAnalyzer.getDependents(ruleId, this.getRules());
+  }
+
+  /**
+   * Task #37: Get rules that a specific rule depends on
+   */
+  getRuleDependencies(ruleId: string): BusinessRule[] {
+    return this.dependencyAnalyzer.getDependencies(ruleId, this.getRules());
+  }
+
+  /**
+   * Task #37: Get all rules that would be affected if a rule is disabled
+   */
+  getRulesAffectedByDisabling(ruleId: string): BusinessRule[] {
+    return this.dependencyAnalyzer.getAffectedByDisabling(ruleId, this.getRules());
   }
 
   /**
@@ -448,7 +558,20 @@ export class RulesEngine {
   }
 
   /**
+   * Task #34: Sort conditions by evaluation cost for optimal short-circuit evaluation
+   * Cheaper operations (exists, equals) go first, expensive ones (regex, custom) last
+   */
+  private sortConditionsByEvaluationCost(conditions: RuleCondition[]): RuleCondition[] {
+    return [...conditions].sort((a, b) => {
+      const costA = CONDITION_COST_WEIGHTS[a.operator] ?? 5;
+      const costB = CONDITION_COST_WEIGHTS[b.operator] ?? 5;
+      return costA - costB;
+    });
+  }
+
+  /**
    * Evaluate if all/any conditions of a rule match
+   * Task #34: Optimized with condition sorting for short-circuit evaluation
    */
   private evaluateRuleConditions(
     rule: BusinessRule,
@@ -458,18 +581,61 @@ export class RulesEngine {
       return true; // No conditions means always match
     }
 
-    const results = rule.conditions.map(condition =>
-      this.evaluateCondition(condition, context)
-    );
+    // Task #34: Sort conditions by evaluation cost for optimal short-circuit behavior
+    const sortedConditions = this.sortConditionsByEvaluationCost(rule.conditions);
 
     if (rule.conditionLogic === 'any') {
-      return results.some(r => r);
+      // For 'any' logic, evaluate until first true (cheaper conditions first)
+      for (const condition of sortedConditions) {
+        if (this.evaluateCondition(condition, context)) {
+          return true; // Short-circuit: found a match
+        }
+      }
+      return false;
     }
-    return results.every(r => r);
+
+    // For 'all' logic (default), evaluate until first false (cheaper conditions first)
+    for (const condition of sortedConditions) {
+      if (!this.evaluateCondition(condition, context)) {
+        return false; // Short-circuit: found a non-match
+      }
+    }
+    return true;
+  }
+
+  /**
+   * Task #34: Get cached RegExp or compile and cache it
+   */
+  private getCachedRegex(pattern: string): RegExp | null {
+    let regex = this.regexCache.get(pattern);
+    if (!regex) {
+      try {
+        regex = new RegExp(pattern);
+        this.regexCache.set(pattern, regex);
+      } catch {
+        return null;
+      }
+    }
+    return regex;
+  }
+
+  /**
+   * Task #34: Get cached Set for 'in' operator or create and cache it
+   * Using Set provides O(1) lookup instead of O(n) array.includes()
+   */
+  private getCachedInOperatorSet(values: unknown[]): Set<unknown> {
+    const cacheKey = JSON.stringify(values);
+    let valueSet = this.inOperatorSetCache.get(cacheKey);
+    if (!valueSet) {
+      valueSet = new Set(values);
+      this.inOperatorSetCache.set(cacheKey, valueSet);
+    }
+    return valueSet;
   }
 
   /**
    * Evaluate a single condition
+   * Task #34: Optimized with regex caching and Set-based 'in' operator
    */
   private evaluateCondition(
     condition: RuleCondition,
@@ -511,25 +677,26 @@ export class RulesEngine {
           && fieldValue < condition.value;
 
       case 'in':
+        // Task #34: Use Set-based lookup for O(1) performance on large value arrays
         if (Array.isArray(condition.value)) {
-          return condition.value.includes(fieldValue);
+          const valueSet = this.getCachedInOperatorSet(condition.value);
+          return valueSet.has(fieldValue);
         }
         return false;
 
       case 'not_in':
+        // Task #34: Use Set-based lookup for O(1) performance on large value arrays
         if (Array.isArray(condition.value)) {
-          return !condition.value.includes(fieldValue);
+          const valueSet = this.getCachedInOperatorSet(condition.value);
+          return !valueSet.has(fieldValue);
         }
         return true;
 
       case 'matches_regex':
+        // Task #34: Use cached regex compilation to avoid repeated new RegExp() calls
         if (typeof fieldValue === 'string' && typeof condition.value === 'string') {
-          try {
-            const regex = new RegExp(condition.value);
-            return regex.test(fieldValue);
-          } catch {
-            return false;
-          }
+          const regex = this.getCachedRegex(condition.value);
+          return regex ? regex.test(fieldValue) : false;
         }
         return false;
 
