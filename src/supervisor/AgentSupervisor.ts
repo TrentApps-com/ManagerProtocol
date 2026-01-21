@@ -35,6 +35,19 @@ export interface AgentSupervisorOptions {
   appMonitorOptions?: AppMonitorOptions;
 }
 
+/**
+ * Cached evaluation entry with timestamp for TTL management
+ */
+interface CachedEvaluation {
+  result: EvaluationResult;
+  cachedAt: number;
+}
+
+/**
+ * Default cache TTL in milliseconds (30 seconds)
+ */
+const DEFAULT_CACHE_TTL_MS = 30_000;
+
 export class AgentSupervisor {
   private config: SupervisorConfig;
   private rulesEngine: RulesEngine;
@@ -43,6 +56,18 @@ export class AgentSupervisor {
   private approvalManager: GitHubApprovalManager;
   private appMonitor: AppMonitor;
   private initialized: boolean = false;
+
+  /**
+   * Cache for evaluation results
+   * Key: cache key derived from action name, category, and parameters
+   * Value: cached evaluation result with timestamp
+   */
+  private evaluationCache: Map<string, CachedEvaluation> = new Map();
+
+  /**
+   * Cache TTL in milliseconds
+   */
+  private cacheTtlMs: number = DEFAULT_CACHE_TTL_MS;
 
   constructor(options: AgentSupervisorOptions = {}) {
     // Initialize with defaults
@@ -93,8 +118,100 @@ export class AgentSupervisor {
   }
 
   /**
+   * Generate a cache key from action and context
+   * Key includes action name, category, and serialized parameters for uniqueness
+   */
+  private generateCacheKey(action: AgentAction, context?: BusinessContext): string {
+    const keyParts = [
+      action.name,
+      action.category,
+      action.agentId || '',
+      context?.agentId || '',
+      context?.environment || '',
+      context?.dataClassification || ''
+    ];
+
+    // Include sorted parameters for consistent key generation
+    if (action.parameters) {
+      const sortedParams = Object.keys(action.parameters)
+        .sort()
+        .map(k => `${k}:${JSON.stringify(action.parameters![k])}`)
+        .join('|');
+      keyParts.push(sortedParams);
+    }
+
+    return keyParts.join('::');
+  }
+
+  /**
+   * Check if a cached evaluation is still valid (within TTL)
+   */
+  private isCacheValid(cached: CachedEvaluation): boolean {
+    return Date.now() - cached.cachedAt < this.cacheTtlMs;
+  }
+
+  /**
+   * Get cached evaluation if available and valid
+   */
+  private getCachedEvaluation(cacheKey: string): EvaluationResult | null {
+    const cached = this.evaluationCache.get(cacheKey);
+    if (cached && this.isCacheValid(cached)) {
+      return cached.result;
+    }
+    // Remove expired entry
+    if (cached) {
+      this.evaluationCache.delete(cacheKey);
+    }
+    return null;
+  }
+
+  /**
+   * Store evaluation result in cache
+   */
+  private cacheEvaluation(cacheKey: string, result: EvaluationResult): void {
+    this.evaluationCache.set(cacheKey, {
+      result,
+      cachedAt: Date.now()
+    });
+  }
+
+  /**
+   * Clear the evaluation cache
+   * Call this when rules are modified or when cache should be invalidated
+   */
+  clearCache(): void {
+    this.evaluationCache.clear();
+  }
+
+  /**
+   * Set the cache TTL in milliseconds
+   * @param ttlMs - Time to live in milliseconds (minimum 1000ms)
+   */
+  setCacheTtl(ttlMs: number): void {
+    this.cacheTtlMs = Math.max(1000, ttlMs);
+  }
+
+  /**
+   * Get current cache TTL in milliseconds
+   */
+  getCacheTtl(): number {
+    return this.cacheTtlMs;
+  }
+
+  /**
+   * Get cache statistics
+   */
+  getCacheStats(): { size: number; ttlMs: number } {
+    return {
+      size: this.evaluationCache.size,
+      ttlMs: this.cacheTtlMs
+    };
+  }
+
+  /**
    * Evaluate an agent action
    * Main entry point for action governance
+   * Results are cached for identical actions within the TTL period
    */
   async evaluateAction(
     action: AgentAction,
@@ -104,6 +221,19 @@ export class AgentSupervisor {
 
     const actionId = action.id || uuidv4();
     const enrichedAction = { ...action, id: actionId };
+
+    // Generate cache key and check for cached result
+    const cacheKey = this.generateCacheKey(enrichedAction, context);
+    const cachedResult = this.getCachedEvaluation(cacheKey);
+    if (cachedResult) {
+      // Return cached result with updated actionId and timestamp
+      return {
+        ...cachedResult,
+        actionId,
+        evaluatedAt: new Date().toISOString(),
+        cached: true
+      };
+    }
 
     // Check rate limits first
     if (this.config.features.rateLimiting) {
@@ -197,6 +327,9 @@ export class AgentSupervisor {
         }
       );
     }
+
+    // Cache the evaluation result for future identical actions
+    this.cacheEvaluation(cacheKey, evaluation);
 
     return evaluation;
   }
@@ -310,16 +443,23 @@ export class AgentSupervisor {
 
   /**
    * Add a custom rule
+   * Invalidates the evaluation cache since rules have changed
    */
   addRule(rule: BusinessRule): void {
     this.rulesEngine.registerRule(rule);
+    this.clearCache();
   }
 
   /**
    * Remove a rule
+   * Invalidates the evaluation cache since rules have changed
    */
   removeRule(ruleId: string): boolean {
-    return this.rulesEngine.unregisterRule(ruleId);
+    const result = this.rulesEngine.unregisterRule(ruleId);
+    if (result) {
+      this.clearCache();
+    }
+    return result;
   }
 
   /**
@@ -518,6 +658,7 @@ export class AgentSupervisor {
 
   /**
    * Load preset configuration
+   * Invalidates the evaluation cache since rules have changed
    */
   async loadPreset(preset: keyof typeof rulePresets): Promise<void> {
     const presetConfig = rulePresets[preset];
@@ -528,6 +669,7 @@ export class AgentSupervisor {
     // Clear existing and load preset
     this.rulesEngine = new RulesEngine();
     this.rateLimiter.clearBuckets();
+    this.clearCache();
 
     this.rulesEngine.registerRules(presetConfig.rules);
     this.rateLimiter.registerLimits(presetConfig.rateLimits);

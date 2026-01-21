@@ -102,7 +102,8 @@ export const EvaluationResultSchema = z.object({
     section: z.string()
   }).optional(),
   evaluatedAt: z.string().datetime(),
-  metadata: z.record(z.unknown()).optional()
+  metadata: z.record(z.unknown()).optional(),
+  cached: z.boolean().optional()
 });
 
 export type EvaluationResult = z.infer<typeof EvaluationResultSchema>;
@@ -185,10 +186,74 @@ export const BusinessRuleSchema = z.object({
   actions: z.array(RuleActionSchema),
   riskWeight: z.number().min(0).max(100).default(10),
   tags: z.array(z.string()).optional(),
-  metadata: z.record(z.unknown()).optional()
+  metadata: z.record(z.unknown()).optional(),
+  // Task #39: Versioning and deprecation support
+  version: z.string().optional(), // Semantic version of the rule (e.g., "1.0.0")
+  deprecated: z.boolean().optional(), // Whether rule is deprecated
+  deprecatedMessage: z.string().optional(), // Migration guidance for deprecated rules
+  replacedBy: z.string().optional(), // ID of replacement rule
+  minVersion: z.string().optional(), // Minimum supervisor version required
+  // Task #37: Rule interdependency support
+  dependsOn: z.array(z.string()).optional(), // Rule IDs this rule depends on (must be evaluated first)
+  conflictsWith: z.array(z.string()).optional(), // Rule IDs that conflict (cannot both be active)
+  relatedRules: z.array(z.string()).optional() // Related rule IDs for reference/documentation
 });
 
 export type BusinessRule = z.infer<typeof BusinessRuleSchema>;
+
+// ============================================================================
+// RULE DEPENDENCY TYPES (Task #37)
+// ============================================================================
+
+export const RuleDependencyNodeSchema = z.object({
+  ruleId: z.string(),
+  ruleName: z.string(),
+  dependencies: z.array(z.string()), // Rule IDs this rule depends on
+  dependents: z.array(z.string()), // Rule IDs that depend on this rule
+  conflicts: z.array(z.string()), // Rule IDs that conflict with this rule
+  related: z.array(z.string()), // Related rule IDs for documentation
+  depth: z.number() // Depth in dependency tree (0 = no dependencies)
+});
+
+export type RuleDependencyNode = z.infer<typeof RuleDependencyNodeSchema>;
+
+export const RuleDependencyGraphSchema = z.object({
+  nodes: z.record(RuleDependencyNodeSchema),
+  executionOrder: z.array(z.string()), // Topologically sorted rule IDs
+  hasCircularDependencies: z.boolean(),
+  circularPaths: z.array(z.array(z.string())), // Paths that form cycles
+  conflicts: z.array(z.object({
+    ruleA: z.string(),
+    ruleB: z.string(),
+    reason: z.string().optional()
+  })),
+  orphanedDependencies: z.array(z.object({
+    ruleId: z.string(),
+    missingDependency: z.string()
+  })),
+  analyzedAt: z.string().datetime()
+});
+
+export type RuleDependencyGraph = z.infer<typeof RuleDependencyGraphSchema>;
+
+export const DependencyValidationResultSchema = z.object({
+  valid: z.boolean(),
+  errors: z.array(z.object({
+    type: z.enum(['missing_dependency', 'circular_dependency', 'self_dependency', 'conflict']),
+    ruleId: z.string(),
+    message: z.string(),
+    details: z.record(z.unknown()).optional()
+  })),
+  warnings: z.array(z.object({
+    type: z.enum(['unused_dependency', 'disabled_dependency', 'deep_dependency_chain']),
+    ruleId: z.string(),
+    message: z.string(),
+    details: z.record(z.unknown()).optional()
+  })),
+  validatedAt: z.string().datetime()
+});
+
+export type DependencyValidationResult = z.infer<typeof DependencyValidationResultSchema>;
 
 // ============================================================================
 // CONTEXT TYPES
