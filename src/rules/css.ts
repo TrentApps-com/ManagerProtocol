@@ -1247,6 +1247,552 @@ export const cssRules: BusinessRule[] = [
     ],
     riskWeight: 3,
     tags: ['css', 'selectors', 'is', 'modern']
+  },
+
+  // ============================================================================
+  // CSS CONSISTENCY RULES (css-130 to css-149)
+  // ============================================================================
+
+  // --- Naming Convention Consistency ---
+  {
+    id: 'css-130',
+    name: 'Enforce BEM Naming Convention',
+    description: 'Ensure consistent BEM naming (block__element--modifier)',
+    type: 'architecture',
+    enabled: true,
+    priority: 720,
+    conditions: [
+      { field: 'projectUsesBEM', operator: 'equals', value: true },
+      { field: 'followsBEMPattern', operator: 'not_equals', value: true }
+    ],
+    conditionLogic: 'all',
+    actions: [
+      { type: 'warn', message: 'Class name does not follow BEM convention (block__element--modifier). Use .block, .block__element, or .block--modifier pattern.' }
+    ],
+    riskWeight: 8,
+    tags: ['css', 'naming', 'bem', 'consistency']
+  },
+  {
+    id: 'css-131',
+    name: 'Enforce SMACSS Naming Convention',
+    description: 'Ensure consistent SMACSS naming (l-, is-, js-, etc.)',
+    type: 'architecture',
+    enabled: true,
+    priority: 720,
+    conditions: [
+      { field: 'projectUsesSMACSS', operator: 'equals', value: true },
+      { field: 'followsSMACSPattern', operator: 'not_equals', value: true }
+    ],
+    conditionLogic: 'all',
+    actions: [
+      { type: 'warn', message: 'Class name does not follow SMACSS convention. Use prefixes: l- (layout), is- (state), js- (JavaScript hooks).' }
+    ],
+    riskWeight: 8,
+    tags: ['css', 'naming', 'smacss', 'consistency']
+  },
+  {
+    id: 'css-132',
+    name: 'Enforce OOCSS Naming Convention',
+    description: 'Ensure consistent OOCSS naming (object-oriented CSS)',
+    type: 'architecture',
+    enabled: true,
+    priority: 720,
+    conditions: [
+      { field: 'projectUsesOOCSS', operator: 'equals', value: true },
+      { field: 'followsOOCSSPattern', operator: 'not_equals', value: true }
+    ],
+    conditionLogic: 'all',
+    actions: [
+      { type: 'warn', message: 'Class name does not follow OOCSS convention. Separate structure from skin, container from content.' }
+    ],
+    riskWeight: 7,
+    tags: ['css', 'naming', 'oocss', 'consistency']
+  },
+  {
+    id: 'css-133',
+    name: 'Enforce kebab-case for Class Names',
+    description: 'Class names should use kebab-case (lowercase with hyphens)',
+    type: 'architecture',
+    enabled: true,
+    priority: 700,
+    conditions: [
+      { field: 'hasNonKebabCaseName', operator: 'equals', value: true }
+    ],
+    conditionLogic: 'all',
+    actions: [
+      { type: 'warn', message: 'Class names should use kebab-case (e.g., .my-component not .myComponent or .my_component).' }
+    ],
+    riskWeight: 6,
+    tags: ['css', 'naming', 'kebab-case', 'consistency']
+  },
+  {
+    id: 'css-134',
+    name: 'Consistent Selector Naming Pattern',
+    description: 'Detect mixed naming conventions in the same stylesheet',
+    type: 'architecture',
+    enabled: true,
+    priority: 750,
+    conditions: [
+      { field: 'hasMixedNamingPatterns', operator: 'equals', value: true }
+    ],
+    conditionLogic: 'all',
+    actions: [
+      { type: 'deny', message: 'Mixed naming conventions detected. Standardize on one convention (BEM, SMACSS, kebab-case) throughout the stylesheet.' }
+    ],
+    riskWeight: 15,
+    tags: ['css', 'naming', 'consistency', 'architecture']
+  },
+
+  // --- Property Ordering Consistency ---
+  {
+    id: 'css-135',
+    name: 'Enforce Property Ordering (Grouped)',
+    description: 'Properties should be ordered by group: positioning, display, box model, typography, visual, misc',
+    type: 'architecture',
+    enabled: true,
+    priority: 680,
+    conditions: [
+      { field: 'propertyOrderStyle', operator: 'equals', value: 'grouped' },
+      { field: 'followsGroupedPropertyOrder', operator: 'not_equals', value: true }
+    ],
+    conditionLogic: 'all',
+    actions: [
+      { type: 'warn', message: 'Properties should be ordered by group: 1) Positioning (position, top, z-index), 2) Display (display, flex, grid), 3) Box Model (width, margin, padding), 4) Typography (font, color), 5) Visual (background, border), 6) Misc (cursor, overflow).' }
+    ],
+    riskWeight: 5,
+    tags: ['css', 'property-order', 'consistency', 'grouped']
+  },
+  {
+    id: 'css-136',
+    name: 'Enforce Property Ordering (Alphabetical)',
+    description: 'Properties should be ordered alphabetically',
+    type: 'architecture',
+    enabled: true,
+    priority: 680,
+    conditions: [
+      { field: 'propertyOrderStyle', operator: 'equals', value: 'alphabetical' },
+      { field: 'followsAlphabeticalPropertyOrder', operator: 'not_equals', value: true }
+    ],
+    conditionLogic: 'all',
+    actions: [
+      { type: 'warn', message: 'Properties should be ordered alphabetically for consistency.' }
+    ],
+    riskWeight: 5,
+    tags: ['css', 'property-order', 'consistency', 'alphabetical']
+  },
+  {
+    id: 'css-137',
+    name: 'Inconsistent Property Ordering Pattern',
+    description: 'Detect mixed property ordering styles in the same stylesheet',
+    type: 'architecture',
+    enabled: true,
+    priority: 700,
+    conditions: [
+      { field: 'hasMixedPropertyOrdering', operator: 'equals', value: true }
+    ],
+    conditionLogic: 'all',
+    actions: [
+      { type: 'warn', message: 'Mixed property ordering detected. Choose one style (grouped or alphabetical) and apply consistently.' }
+    ],
+    riskWeight: 8,
+    tags: ['css', 'property-order', 'consistency']
+  },
+
+  // --- Unit Consistency ---
+  {
+    id: 'css-138',
+    name: 'Consistent Font Size Units',
+    description: 'Font sizes should use consistent units (rem preferred)',
+    type: 'ux',
+    enabled: true,
+    priority: 780,
+    conditions: [
+      { field: 'hasMixedFontSizeUnits', operator: 'equals', value: true }
+    ],
+    conditionLogic: 'all',
+    actions: [
+      { type: 'warn', message: 'Mixed font-size units detected. Use rem consistently for accessibility (allows user font scaling).' }
+    ],
+    riskWeight: 10,
+    tags: ['css', 'units', 'consistency', 'font-size', 'accessibility']
+  },
+  {
+    id: 'css-139',
+    name: 'Consistent Spacing Units',
+    description: 'Spacing (margin, padding, gap) should use consistent units',
+    type: 'architecture',
+    enabled: true,
+    priority: 740,
+    conditions: [
+      { field: 'hasMixedSpacingUnits', operator: 'equals', value: true }
+    ],
+    conditionLogic: 'all',
+    actions: [
+      { type: 'warn', message: 'Mixed spacing units detected (px, rem, em). Standardize on rem or design system tokens for consistent spacing scale.' }
+    ],
+    riskWeight: 8,
+    tags: ['css', 'units', 'consistency', 'spacing']
+  },
+  {
+    id: 'css-140',
+    name: 'Consistent Line Height Units',
+    description: 'Line heights should use unitless values or consistent units',
+    type: 'ux',
+    enabled: true,
+    priority: 720,
+    conditions: [
+      { field: 'hasMixedLineHeightUnits', operator: 'equals', value: true }
+    ],
+    conditionLogic: 'all',
+    actions: [
+      { type: 'warn', message: 'Mixed line-height units detected. Use unitless values (e.g., 1.5) for predictable scaling with font-size changes.' }
+    ],
+    riskWeight: 7,
+    tags: ['css', 'units', 'consistency', 'line-height', 'typography']
+  },
+  {
+    id: 'css-141',
+    name: 'Consistent Border Width Units',
+    description: 'Border widths should use consistent units',
+    type: 'architecture',
+    enabled: true,
+    priority: 660,
+    conditions: [
+      { field: 'hasMixedBorderWidthUnits', operator: 'equals', value: true }
+    ],
+    conditionLogic: 'all',
+    actions: [
+      { type: 'warn', message: 'Mixed border-width units detected. Use px for thin borders or design tokens for consistency.' }
+    ],
+    riskWeight: 5,
+    tags: ['css', 'units', 'consistency', 'border']
+  },
+  {
+    id: 'css-142',
+    name: 'Use Zero Without Units',
+    description: 'Zero values should not have units (0 not 0px)',
+    type: 'architecture',
+    enabled: true,
+    priority: 650,
+    conditions: [
+      { field: 'hasZeroWithUnits', operator: 'equals', value: true }
+    ],
+    conditionLogic: 'all',
+    actions: [
+      { type: 'warn', message: 'Zero values should be unitless (0 not 0px, 0rem). This reduces file size and is the recommended practice.' }
+    ],
+    riskWeight: 3,
+    tags: ['css', 'units', 'consistency', 'zero']
+  },
+
+  // --- Color Format Consistency ---
+  {
+    id: 'css-143',
+    name: 'Consistent Color Format (Hex)',
+    description: 'Colors should use consistent format (hex preferred)',
+    type: 'architecture',
+    enabled: true,
+    priority: 720,
+    conditions: [
+      { field: 'projectColorFormat', operator: 'equals', value: 'hex' },
+      { field: 'usesNonHexColor', operator: 'equals', value: true }
+    ],
+    conditionLogic: 'all',
+    actions: [
+      { type: 'warn', message: 'Non-hex color format detected. Use hex format (#rgb or #rrggbb) consistently for this project.' }
+    ],
+    riskWeight: 6,
+    tags: ['css', 'colors', 'consistency', 'hex']
+  },
+  {
+    id: 'css-144',
+    name: 'Consistent Color Format (RGB/RGBA)',
+    description: 'Colors should use consistent format (rgb/rgba preferred)',
+    type: 'architecture',
+    enabled: true,
+    priority: 720,
+    conditions: [
+      { field: 'projectColorFormat', operator: 'equals', value: 'rgb' },
+      { field: 'usesNonRgbColor', operator: 'equals', value: true }
+    ],
+    conditionLogic: 'all',
+    actions: [
+      { type: 'warn', message: 'Non-rgb color format detected. Use rgb()/rgba() format consistently for this project.' }
+    ],
+    riskWeight: 6,
+    tags: ['css', 'colors', 'consistency', 'rgb']
+  },
+  {
+    id: 'css-145',
+    name: 'Consistent Color Format (HSL/HSLA)',
+    description: 'Colors should use consistent format (hsl/hsla preferred)',
+    type: 'architecture',
+    enabled: true,
+    priority: 720,
+    conditions: [
+      { field: 'projectColorFormat', operator: 'equals', value: 'hsl' },
+      { field: 'usesNonHslColor', operator: 'equals', value: true }
+    ],
+    conditionLogic: 'all',
+    actions: [
+      { type: 'warn', message: 'Non-hsl color format detected. Use hsl()/hsla() format consistently for this project.' }
+    ],
+    riskWeight: 6,
+    tags: ['css', 'colors', 'consistency', 'hsl']
+  },
+  {
+    id: 'css-146',
+    name: 'Mixed Color Formats Detected',
+    description: 'Detect inconsistent color formats in the same stylesheet',
+    type: 'architecture',
+    enabled: true,
+    priority: 750,
+    conditions: [
+      { field: 'hasMixedColorFormats', operator: 'equals', value: true }
+    ],
+    conditionLogic: 'all',
+    actions: [
+      { type: 'warn', message: 'Mixed color formats detected (hex, rgb, hsl). Standardize on one format for maintainability. Consider HSL for easier color manipulation.' }
+    ],
+    riskWeight: 10,
+    tags: ['css', 'colors', 'consistency', 'format']
+  },
+  {
+    id: 'css-147',
+    name: 'Use Modern Color Syntax',
+    description: 'Use modern color syntax (rgb/hsl without commas)',
+    type: 'architecture',
+    enabled: true,
+    priority: 650,
+    conditions: [
+      { field: 'usesLegacyColorSyntax', operator: 'equals', value: true }
+    ],
+    conditionLogic: 'all',
+    actions: [
+      { type: 'warn', message: 'Consider modern color syntax: rgb(255 0 0 / 50%) instead of rgba(255, 0, 0, 0.5) for cleaner code.' }
+    ],
+    riskWeight: 3,
+    tags: ['css', 'colors', 'consistency', 'modern']
+  },
+  {
+    id: 'css-148',
+    name: 'Use Hex Shorthand When Possible',
+    description: 'Use 3-character hex when possible (#fff not #ffffff)',
+    type: 'architecture',
+    enabled: true,
+    priority: 620,
+    conditions: [
+      { field: 'hasExpandableHex', operator: 'equals', value: true }
+    ],
+    conditionLogic: 'all',
+    actions: [
+      { type: 'warn', message: 'Use shorthand hex when possible (#fff instead of #ffffff) for conciseness.' }
+    ],
+    riskWeight: 2,
+    tags: ['css', 'colors', 'consistency', 'hex', 'shorthand']
+  },
+
+  // --- Vendor Prefix Consistency ---
+  {
+    id: 'css-149',
+    name: 'Consistent Vendor Prefix Ordering',
+    description: 'Vendor prefixes should be ordered consistently (-webkit, -moz, -ms, unprefixed)',
+    type: 'architecture',
+    enabled: true,
+    priority: 700,
+    conditions: [
+      { field: 'hasVendorPrefix', operator: 'equals', value: true },
+      { field: 'hasInconsistentPrefixOrder', operator: 'equals', value: true }
+    ],
+    conditionLogic: 'all',
+    actions: [
+      { type: 'warn', message: 'Vendor prefixes should be ordered: -webkit-, -moz-, -ms-, then unprefixed standard property last.' }
+    ],
+    riskWeight: 6,
+    tags: ['css', 'vendor-prefix', 'consistency', 'order']
+  },
+  {
+    id: 'css-150',
+    name: 'Missing Standard Property After Vendor Prefix',
+    description: 'Vendor-prefixed properties must include the unprefixed version',
+    type: 'architecture',
+    enabled: true,
+    priority: 780,
+    conditions: [
+      { field: 'hasVendorPrefix', operator: 'equals', value: true },
+      { field: 'hasMissingUnprefixedProperty', operator: 'equals', value: true }
+    ],
+    conditionLogic: 'all',
+    actions: [
+      { type: 'deny', message: 'Vendor-prefixed property missing unprefixed fallback. Always include the standard property for future compatibility.' }
+    ],
+    riskWeight: 15,
+    tags: ['css', 'vendor-prefix', 'consistency', 'fallback']
+  },
+  {
+    id: 'css-151',
+    name: 'Incomplete Vendor Prefix Set',
+    description: 'When using vendor prefixes, include all relevant prefixes',
+    type: 'architecture',
+    enabled: true,
+    priority: 720,
+    conditions: [
+      { field: 'hasVendorPrefix', operator: 'equals', value: true },
+      { field: 'hasIncompletePrefixSet', operator: 'equals', value: true }
+    ],
+    conditionLogic: 'all',
+    actions: [
+      { type: 'warn', message: 'Incomplete vendor prefix set. Consider using autoprefixer or include all necessary prefixes (-webkit-, -moz-, -ms-).' }
+    ],
+    riskWeight: 8,
+    tags: ['css', 'vendor-prefix', 'consistency', 'complete']
+  },
+  {
+    id: 'css-152',
+    name: 'Deprecated Vendor Prefix',
+    description: 'Avoid vendor prefixes that are no longer needed',
+    type: 'architecture',
+    enabled: true,
+    priority: 700,
+    conditions: [
+      { field: 'hasDeprecatedVendorPrefix', operator: 'equals', value: true }
+    ],
+    conditionLogic: 'all',
+    actions: [
+      { type: 'warn', message: 'Deprecated vendor prefix detected. This prefix is no longer needed for modern browsers (flexbox, border-radius, box-shadow, etc.).' }
+    ],
+    riskWeight: 5,
+    tags: ['css', 'vendor-prefix', 'deprecated', 'cleanup']
+  },
+
+  // --- Design Token Validation ---
+  {
+    id: 'css-153',
+    name: 'Validate Against Design Tokens',
+    description: 'Property values should match design system tokens',
+    type: 'ux',
+    enabled: true,
+    priority: 800,
+    conditions: [
+      { field: 'hasDesignTokens', operator: 'equals', value: true },
+      { field: 'valueMatchesDesignToken', operator: 'not_equals', value: true }
+    ],
+    conditionLogic: 'all',
+    actions: [
+      { type: 'warn', message: 'Value does not match design tokens. Use design system values for consistency (colors, spacing, typography).' }
+    ],
+    riskWeight: 12,
+    tags: ['css', 'design-tokens', 'consistency', 'design-system']
+  },
+  {
+    id: 'css-154',
+    name: 'Non-Standard Spacing Value',
+    description: 'Spacing values should match the spacing scale',
+    type: 'architecture',
+    enabled: true,
+    priority: 750,
+    conditions: [
+      { field: 'hasSpacingScale', operator: 'equals', value: true },
+      { field: 'spacingMatchesScale', operator: 'not_equals', value: true }
+    ],
+    conditionLogic: 'all',
+    actions: [
+      { type: 'warn', message: 'Spacing value does not match the spacing scale. Use standard increments (4px, 8px, 16px, 24px, 32px, etc.) or design tokens.' }
+    ],
+    riskWeight: 8,
+    tags: ['css', 'spacing', 'consistency', 'design-tokens']
+  },
+  {
+    id: 'css-155',
+    name: 'Non-Standard Font Size',
+    description: 'Font sizes should match the type scale',
+    type: 'ux',
+    enabled: true,
+    priority: 760,
+    conditions: [
+      { field: 'hasTypeScale', operator: 'equals', value: true },
+      { field: 'fontSizeMatchesScale', operator: 'not_equals', value: true }
+    ],
+    conditionLogic: 'all',
+    actions: [
+      { type: 'warn', message: 'Font size does not match the type scale. Use standard sizes (12px, 14px, 16px, 18px, 20px, 24px, etc.) or design tokens.' }
+    ],
+    riskWeight: 8,
+    tags: ['css', 'typography', 'consistency', 'design-tokens']
+  },
+
+  // --- CSS Linting Integration Suggestions ---
+  {
+    id: 'css-156',
+    name: 'Suggest Stylelint Integration',
+    description: 'Recommend Stylelint for automated CSS linting',
+    type: 'architecture',
+    enabled: true,
+    priority: 650,
+    conditions: [
+      { field: 'hasStylelintConfig', operator: 'not_equals', value: true },
+      { field: 'cssFileCount', operator: 'greater_than', value: 5 }
+    ],
+    conditionLogic: 'all',
+    actions: [
+      { type: 'warn', message: 'Consider adding Stylelint for automated CSS linting. Create .stylelintrc.json with rules for naming, ordering, and format consistency.' }
+    ],
+    riskWeight: 5,
+    tags: ['css', 'linting', 'stylelint', 'tooling']
+  },
+  {
+    id: 'css-157',
+    name: 'Suggest CSS Modules or Scoped Styles',
+    description: 'Recommend scoped CSS for component isolation',
+    type: 'architecture',
+    enabled: true,
+    priority: 680,
+    conditions: [
+      { field: 'hasComponentArchitecture', operator: 'equals', value: true },
+      { field: 'usesScopedStyles', operator: 'not_equals', value: true }
+    ],
+    conditionLogic: 'all',
+    actions: [
+      { type: 'warn', message: 'Consider CSS Modules or scoped styles for component isolation. This prevents naming conflicts and improves maintainability.' }
+    ],
+    riskWeight: 6,
+    tags: ['css', 'architecture', 'css-modules', 'scoped']
+  },
+  {
+    id: 'css-158',
+    name: 'Suggest PostCSS for Processing',
+    description: 'Recommend PostCSS for CSS processing and transformation',
+    type: 'architecture',
+    enabled: true,
+    priority: 640,
+    conditions: [
+      { field: 'hasPostCSSConfig', operator: 'not_equals', value: true },
+      { field: 'hasVendorPrefix', operator: 'equals', value: true }
+    ],
+    conditionLogic: 'all',
+    actions: [
+      { type: 'warn', message: 'Consider using PostCSS with autoprefixer to automatically handle vendor prefixes. This ensures consistent prefix handling.' }
+    ],
+    riskWeight: 4,
+    tags: ['css', 'tooling', 'postcss', 'autoprefixer']
+  },
+  {
+    id: 'css-159',
+    name: 'Suggest Prettier for CSS Formatting',
+    description: 'Recommend Prettier for consistent CSS formatting',
+    type: 'architecture',
+    enabled: true,
+    priority: 620,
+    conditions: [
+      { field: 'hasPrettierConfig', operator: 'not_equals', value: true },
+      { field: 'hasInconsistentFormatting', operator: 'equals', value: true }
+    ],
+    conditionLogic: 'all',
+    actions: [
+      { type: 'warn', message: 'Consider using Prettier for consistent CSS formatting. This enforces property ordering, spacing, and formatting automatically.' }
+    ],
+    riskWeight: 3,
+    tags: ['css', 'tooling', 'prettier', 'formatting']
   }
 ];
 
