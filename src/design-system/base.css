@@ -1,0 +1,443 @@
+/**
+ * Enterprise Agent Supervisor - Base Design System
+ *
+ * This is the reference design system that css_eval uses to suggest
+ * consistent styles and variable usage.
+ */
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+:root {
+    /* Backgrounds - Warm, comfortable grays */
+    --bg-primary: #f5f5f3;           /* Warm off-white, easy on eyes */
+    --bg-secondary: #fafafa;         /* Soft white for cards */
+    --bg-elevated: #ffffff;          /* Pure white for emphasis */
+    --bg-subtle: #ebebea;            /* Subtle gray for containers */
+
+    /* Text Colors - Soft contrast, not harsh black */
+    --text-primary: #2a2a2a;         /* Dark gray, not pure black */
+    --text-secondary: #5a5a5a;       /* Medium gray for secondary text */
+    --text-tertiary: #8a8a8a;        /* Light gray for labels */
+    --text-muted: #9a9a9a;           /* Light gray for disabled (improved contrast) */
+
+    /* Accent Colors - Muted, sophisticated */
+    --accent-primary: #6b7c93;       /* Muted slate blue */
+    --accent-primary-hover: #5a6a7f; /* Darker slate on hover */
+    --accent-secondary: #8b9aaf;     /* Lighter slate for backgrounds */
+    --accent-subtle: #e8ecf0;        /* Very light slate for surfaces */
+
+    /* Semantic Colors - Desaturated */
+    --success: #7a9678;              /* Muted sage green */
+    --success-bg: #f0f4f0;           /* Soft green background */
+    --success-bright: #22c55e;       /* Bright green for active states */
+    --warning: #b8956f;              /* Muted terracotta */
+    --recording: #a37b7b;            /* Muted rose for recording state */
+    --info: #3b82f6;                 /* Blue for informational states */
+    --info-muted: #6b7280;           /* Muted gray-blue */
+    --admin-purple: #9c75ad;         /* Purple for admin badges */
+
+    /* Borders - Subtle, almost invisible */
+    --border-primary: #e5e5e3;       /* Barely visible border */
+    --border-secondary: #d5d5d3;     /* Slightly more visible */
+    --border-subtle: #f0f0ee;        /* Very subtle divider */
+
+    /* Shadows - Minimal, soft */
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.04);
+    --shadow-md: 0 2px 4px rgba(0, 0, 0, 0.06);
+    --shadow-lg: 0 4px 8px rgba(0, 0, 0, 0.08);
+
+    /* Spacing - Generous, clean */
+    --space-xs: 8px;
+    --space-sm: 12px;
+    --space-md: 16px;
+    --space-lg: 24px;
+    --space-xl: 32px;
+    --space-2xl: 48px;
+
+    /* Border Radius - Gentle, modern */
+    --radius-xs: 4px;
+    --radius-sm: 6px;
+    --radius-md: 8px;
+    --radius-lg: 12px;
+    --radius-xl: 16px;
+
+    /* Typography */
+    --font-normal: 400;
+    --font-medium: 500;
+    --font-semibold: 600;
+
+    /* Z-Index Scale */
+    --z-base: 1;
+    --z-dropdown: 1000;
+    --z-modal: 2000;
+    --z-overlay: 3000;
+    --z-notification: 9999;
+
+    /* Legacy aliases for compatibility */
+    --border: var(--border-primary);
+    --border-hover: var(--border-secondary);
+    --accent: var(--accent-primary);
+    --accent-hover: var(--accent-primary-hover);
+    --accent-bg: rgba(107, 124, 147, 0.1); /* Light accent background */
+    --danger: #b87b7b;               /* Muted rose, complements warm palette */
+    --danger-hover: #a37b7b;         /* Darker muted rose for hover */
+    --radius: var(--radius-md);
+    --bg-tertiary: var(--bg-subtle);
+    --bg-quaternary: var(--bg-subtle);
+    --surface-secondary: var(--bg-secondary);
+    --surface-tertiary: var(--bg-subtle);
+
+    /* Transition speed for animations */
+    --transition-speed: 200ms;
+}
+
+/* Dark Mode Theme */
+[data-theme="dark"] {
+    /* Backgrounds - Dark, comfortable grays */
+    --bg-primary: #1a1a1a;
+    --bg-secondary: #222222;
+    --bg-elevated: #2a2a2a;
+    --bg-subtle: #151515;
+
+    /* Text Colors - Light, comfortable on dark */
+    --text-primary: #e5e5e5;
+    --text-secondary: #b0b0b0;
+    --text-tertiary: #808080;
+    --text-muted: #606060;
+
+    /* Accent Colors - Vibrant blue for dark mode */
+    --accent-primary: #5865F2;
+    --accent-primary-hover: #4752c4;
+    --accent-secondary: #7983f5;
+    --accent-subtle: #2d3259;
+
+    /* Semantic Colors - Adjusted for dark mode */
+    --success: #8faa8c;
+    --success-bg: #1f2e1f;
+    --warning: #c9a77d;
+    --recording: #b88e8e;
+
+    /* Borders - Subtle in dark mode */
+    --border-primary: #333333;
+    --border-secondary: #444444;
+    --border-subtle: #282828;
+
+    /* Shadows - More pronounced in dark mode */
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+    --shadow-md: 0 2px 4px rgba(0, 0, 0, 0.4);
+    --shadow-lg: 0 4px 8px rgba(0, 0, 0, 0.5);
+
+    /* Legacy aliases */
+    --accent-bg: rgba(88, 101, 242, 0.15); /* Light accent background for dark mode */
+    --danger: #c98e8e;
+    --danger-hover: #b88e8e;
+    --bg-quaternary: var(--bg-subtle);
+    --surface-secondary: var(--bg-secondary);
+    --surface-tertiary: var(--bg-subtle);
+}
+
+/* Font Size Variants */
+[data-font-size="small"] {
+    font-size: 13px;
+}
+
+[data-font-size="medium"] {
+    font-size: 15px;
+}
+
+[data-font-size="large"] {
+    font-size: 17px;
+}
+
+@import url('https://fonts.googleapis.com/css2?family=Noto+Sans:wght@300;400;500;600;700&display=swap');
+
+/* Base */
+body {
+    font-family: 'Noto Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI Variable', 'Segoe UI', system-ui, ui-sans-serif, sans-serif;
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    line-height: 1.6;
+    font-size: 15px;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+}
+
+/* Global form input styling */
+input[type="text"],
+input[type="email"],
+input[type="tel"],
+input[type="url"],
+input[type="number"],
+input[type="date"],
+input[type="time"],
+input[type="datetime-local"],
+input[type="password"],
+textarea,
+select {
+    width: 100%;
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    font-size: 0.9375rem;
+    font-family: inherit;
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+    transition: all 0.2s ease;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+}
+
+input[type="text"]:hover:not(:disabled):not(:focus),
+input[type="email"]:hover:not(:disabled):not(:focus),
+input[type="tel"]:hover:not(:disabled):not(:focus),
+input[type="url"]:hover:not(:disabled):not(:focus),
+input[type="number"]:hover:not(:disabled):not(:focus),
+input[type="date"]:hover:not(:disabled):not(:focus),
+input[type="time"]:hover:not(:disabled):not(:focus),
+input[type="datetime-local"]:hover:not(:disabled):not(:focus),
+input[type="password"]:hover:not(:disabled):not(:focus),
+textarea:hover:not(:disabled):not(:focus),
+select:hover:not(:disabled):not(:focus) {
+    border-color: var(--border-hover);
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.08);
+}
+
+input[type="text"]:focus,
+input[type="email"]:focus,
+input[type="tel"]:focus,
+input[type="url"]:focus,
+input[type="number"]:focus,
+input[type="date"]:focus,
+input[type="time"]:focus,
+input[type="datetime-local"]:focus,
+input[type="password"]:focus,
+textarea:focus,
+select:focus {
+    outline: none;
+    border-color: var(--accent-primary);
+    box-shadow: 0 0 0 3px var(--accent-bg);
+}
+
+textarea {
+    resize: vertical;
+    min-height: 100px;
+}
+
+input::placeholder,
+textarea::placeholder {
+    color: var(--text-tertiary);
+    opacity: 0.7;
+}
+
+/* Form select */
+select.form-select,
+select.form-input {
+    width: 100%;
+    padding: 0.75rem;
+    padding-right: 40px;
+    border: 1px solid var(--border-primary);
+    border-radius: 8px;
+    background-color: var(--bg-secondary);
+    color: var(--text-primary);
+}
+
+select.form-select:focus,
+select.form-input:focus {
+    outline: 2px solid var(--accent-primary);
+    outline-offset: 0;
+    border-color: var(--accent-primary);
+}
+
+/* Container */
+.container {
+    max-width: 1200px;
+    width: 100%;
+    margin: 0 auto;
+    padding: var(--space-lg);
+    flex: 1 0 auto;
+}
+
+/* Header */
+.header {
+    background: var(--bg-secondary);
+    border: 1.5px solid var(--border-primary);
+    border-radius: var(--radius-xl);
+    padding: 0;
+    margin-bottom: calc(var(--space-xl) + var(--space-md));
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06), 0 1px 3px rgba(0, 0, 0, 0.08);
+    position: relative;
+    z-index: 100;
+    transition: box-shadow 0.2s ease;
+}
+
+.header:hover {
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08), 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.header-content {
+    max-width: none;
+    margin: 0;
+    padding: calc(var(--space-lg) + 2px);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    min-height: calc(48px + (2 * var(--space-lg)));
+    flex-wrap: nowrap;
+    gap: var(--space-lg);
+}
+
+.logo-container {
+    display: flex;
+    align-items: center;
+    gap: calc(var(--space-md) + 2px);
+    flex-wrap: nowrap;
+}
+
+.logo-icon-wrapper {
+    width: 60px;
+    height: 60px;
+    border-radius: var(--radius-lg);
+    background: linear-gradient(135deg, var(--accent-subtle), rgba(107, 124, 147, 0.08));
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--accent-primary);
+    flex-shrink: 0;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.04);
+    transition: all 0.2s ease;
+}
+
+.header:hover .logo-icon-wrapper {
+    box-shadow: 0 3px 6px rgba(0, 0, 0, 0.06);
+    transform: scale(1.02);
+}
+
+.logo-icon {
+    width: 46px;
+    height: 46px;
+    color: var(--accent-primary);
+    display: block;
+    line-height: 1;
+}
+
+.header h1,
+.page-title {
+    font-size: 1.375rem;
+    font-weight: 700;
+    color: var(--text-primary);
+    letter-spacing: -0.025em;
+    margin: 0;
+    line-height: 1.2;
+}
+
+.header h1 span,
+.page-title span {
+    color: var(--text-secondary);
+    font-weight: 500;
+    letter-spacing: -0.015em;
+}
+
+.header-right,
+.header-actions {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+    flex-wrap: nowrap;
+}
+
+.header svg,
+.header i {
+    display: block;
+}
+
+.header i {
+    font-size: 1rem;
+    line-height: 1;
+}
+
+.header .icon-loading {
+    font-size: 1rem;
+}
+
+/* Footer */
+.app-footer {
+    text-align: center;
+    padding: var(--space-sm) var(--space-md);
+    margin-top: auto;
+    flex-shrink: 0;
+}
+
+.footer-text {
+    font-size: 11px;
+    font-weight: 300;
+    letter-spacing: 0.02em;
+    color: var(--text-tertiary);
+    opacity: 0.6;
+}
+
+/* Record Button */
+#recordBtn {
+    position: relative;
+    background: var(--accent-primary);
+    color: white;
+    border: none;
+}
+
+#recordBtn:hover {
+    background: var(--accent-primary-hover);
+    box-shadow: var(--shadow-lg);
+    transform: translateY(-1px);
+}
+
+#recordBtn.recording {
+    background: var(--recording);
+    box-shadow: 0 0 0 3px rgba(163, 123, 123, 0.2);
+}
+
+/* Sound Bars */
+.sound-bars {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    display: none;
+    gap: 2px;
+    height: 20px;
+    align-items: center;
+    justify-content: center;
+}
+
+#recordBtn.recording .sound-bars {
+    display: flex;
+}
+
+.sound-bar {
+    width: 2px;
+    background: white;
+    border-radius: 1px;
+    transition: transform 0.15s ease-out, height 0.15s ease-out;
+}
+
+.sound-bar:nth-child(1) { height: 8px; }
+.sound-bar:nth-child(2) { height: 12px; }
+.sound-bar:nth-child(3) { height: 10px; }
+.sound-bar:nth-child(4) { height: 14px; }
+.sound-bar:nth-child(5) { height: 11px; }
+.sound-bar:nth-child(6) { height: 13px; }
+.sound-bar:nth-child(7) { height: 9px; }
+
+#recordBtn.recording:not(.has-audio) .sound-bar {
+    animation: pulse-idle 2s ease-in-out infinite;
+}
+
+@keyframes pulse-idle {
+    0%, 100% { transform: scaleY(1); }
+    50% { transform: scaleY(0.6); }
+}

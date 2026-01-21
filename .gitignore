@@ -1,0 +1,51 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Runtime data (user-specific)
+managed-servers.json
+data/
+.mcp.json
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+
+# Test coverage
+coverage/
+
+# Cache
+.cache/
+.npm/
+
+# TypeScript
+*.tsbuildinfo
+
+# Playwright artifacts
+test-results/
+playwright-report/
+traces/
+screenshots/
+videos/
+*.png
+*.jpg
+*.jpeg
+*.webm

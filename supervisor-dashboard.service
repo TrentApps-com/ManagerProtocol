@@ -1,0 +1,23 @@
+[Unit]
+Description=Agent Supervisor Dashboard
+After=network.target
+
+[Service]
+Type=simple
+User=inadu
+Group=inadu
+WorkingDirectory=/mnt/code/ManagerProtocol
+ExecStart=/usr/bin/node /mnt/code/ManagerProtocol/start-dashboard.js
+Restart=always
+RestartSec=3
+StandardOutput=append:/mnt/code/ManagerProtocol/logs/dashboard.log
+StandardError=append:/mnt/code/ManagerProtocol/logs/dashboard-error.log
+Environment=NODE_ENV=development
+Environment=AUDIT_DB_PATH=/tmp/agent-supervisor/audit.db
+
+# Security settings
+NoNewPrivileges=true
+PrivateTmp=false
+
+[Install]
+WantedBy=multi-user.target
