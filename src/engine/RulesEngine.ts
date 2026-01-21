@@ -18,11 +18,34 @@ import type {
   RuleAction
 } from '../types/index.js';
 
+/**
+ * Task #34: Condition evaluation cost weights for optimization
+ * Lower numbers = faster operations, should be evaluated first
+ */
+const CONDITION_COST_WEIGHTS: Record<string, number> = {
+  exists: 1,
+  not_exists: 1,
+  equals: 2,
+  not_equals: 2,
+  in: 3,
+  not_in: 3,
+  greater_than: 4,
+  less_than: 4,
+  contains: 5,
+  not_contains: 5,
+  matches_regex: 10, // Expensive - evaluate last
+  custom: 8 // Custom evaluators can be expensive
+};
+
 export class RulesEngine {
   private rules: Map<string, BusinessRule> = new Map();
   private customEvaluators: Map<string, (context: Record<string, unknown>, condition: RuleCondition) => boolean> = new Map();
   // Task #53: Cache for compiled evaluators - keyed by evaluator name/string representation
   private evaluatorCache: Map<string, (context: Record<string, unknown>, condition: RuleCondition) => boolean> = new Map();
+  // Task #34: Cache for compiled RegExp objects - keyed by pattern string
+  private regexCache: Map<string, RegExp> = new Map();
+  // Task #34: Cache for optimized 'in' operator Sets - keyed by JSON.stringify of value array
+  private inOperatorSetCache: Map<string, Set<unknown>> = new Map();
 
   constructor() {
     this.registerDefaultEvaluators();
@@ -60,10 +83,13 @@ export class RulesEngine {
 
   /**
    * Task #53: Clear the evaluator cache
+   * Task #34: Also clear regex and 'in' operator caches
    * Called when rules are modified to ensure fresh compilation
    */
   private clearEvaluatorCache(): void {
     this.evaluatorCache.clear();
+    this.regexCache.clear();
+    this.inOperatorSetCache.clear();
   }
 
   /**
@@ -75,11 +101,119 @@ export class RulesEngine {
 
   /**
    * Get enabled rules sorted by priority (higher priority first)
+   * Task #39: In strict mode, filters out deprecated rules
    */
-  getActiveRules(): BusinessRule[] {
+  getActiveRules(strictMode: boolean = false): BusinessRule[] {
     return this.getRules()
       .filter(rule => rule.enabled)
+      .filter(rule => !strictMode || !rule.deprecated)
       .sort((a, b) => b.priority - a.priority);
+  }
+
+  /**
+   * Task #39: Get all deprecated rules
+   */
+  getDeprecatedRules(): BusinessRule[] {
+    return this.getRules().filter(rule => rule.deprecated === true);
+  }
+
+  /**
+   * Task #39: Analyze rules and suggest migrations for deprecated rules
+   * Returns migration suggestions with replacement rule information
+   */
+  migrateRules(rules: BusinessRule[]): Array<{
+    ruleId: string;
+    ruleName: string;
+    deprecatedMessage?: string;
+    replacedBy?: string;
+    replacementRule?: BusinessRule;
+    suggestion: string;
+  }> {
+    const migrations: Array<{
+      ruleId: string;
+      ruleName: string;
+      deprecatedMessage?: string;
+      replacedBy?: string;
+      replacementRule?: BusinessRule;
+      suggestion: string;
+    }> = [];
+
+    for (const rule of rules) {
+      if (rule.deprecated) {
+        const replacementRule = rule.replacedBy ? this.rules.get(rule.replacedBy) : undefined;
+
+        let suggestion = `Rule '${rule.name}' (${rule.id}) is deprecated.`;
+
+        if (rule.deprecatedMessage) {
+          suggestion += ` ${rule.deprecatedMessage}`;
+        }
+
+        if (rule.replacedBy) {
+          if (replacementRule) {
+            suggestion += ` Migrate to '${replacementRule.name}' (${rule.replacedBy}).`;
+          } else {
+            suggestion += ` Recommended replacement: ${rule.replacedBy} (not found in current rules).`;
+          }
+        }
+
+        migrations.push({
+          ruleId: rule.id,
+          ruleName: rule.name,
+          deprecatedMessage: rule.deprecatedMessage,
+          replacedBy: rule.replacedBy,
+          replacementRule,
+          suggestion
+        });
+      }
+    }
+
+    return migrations;
+  }
+
+  /**
+   * Task #39: Check if a rule is compatible with the current supervisor version
+   */
+  isRuleCompatible(rule: BusinessRule, currentVersion: string): boolean {
+    if (!rule.minVersion) {
+      return true; // No version requirement
+    }
+    return this.compareVersions(currentVersion, rule.minVersion) >= 0;
+  }
+
+  /**
+   * Task #39: Compare semantic versions
+   * Returns: 1 if a > b, -1 if a < b, 0 if equal
+   */
+  private compareVersions(a: string, b: string): number {
+    const partsA = a.split('.').map(Number);
+    const partsB = b.split('.').map(Number);
+
+    for (let i = 0; i < Math.max(partsA.length, partsB.length); i++) {
+      const numA = partsA[i] || 0;
+      const numB = partsB[i] || 0;
+
+      if (numA > numB) return 1;
+      if (numA < numB) return -1;
+    }
+
+    return 0;
+  }
+
+  /**
+   * Task #39: Warn about deprecated rule usage
+   */
+  private warnDeprecatedRule(rule: BusinessRule): void {
+    let message = `[DEPRECATED] Rule '${rule.name}' (${rule.id}) is deprecated.`;
+
+    if (rule.deprecatedMessage) {
+      message += ` ${rule.deprecatedMessage}`;
+    }
+
+    if (rule.replacedBy) {
+      message += ` Consider migrating to: ${rule.replacedBy}`;
+    }
+
+    console.warn(message);
   }
 
   /**
@@ -123,6 +257,11 @@ export class RulesEngine {
 
       if (ruleMatches) {
         appliedRules.push(rule.id);
+
+        // Task #39: Warn when deprecated rules are triggered
+        if (rule.deprecated) {
+          this.warnDeprecatedRule(rule);
+        }
 
         // Task #57: Weight risk by rule priority (0-1000 scale)
         // Higher priority rules have more impact on final score

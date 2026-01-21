@@ -475,3 +475,99 @@ export function listProjectProfiles(): Array<{key: string, name: string, descrip
     ruleCount: config.rules.length
   }));
 }
+
+// ============================================================================
+// Task #39: VERSIONING AND DEPRECATION HELPERS
+// ============================================================================
+
+/**
+ * Task #39: Get all deprecated rules
+ */
+export function getDeprecatedRules(): BusinessRule[] {
+  return allBuiltInRules.filter(rule => rule.deprecated === true);
+}
+
+/**
+ * Task #39: Get rules that are compatible with a specific supervisor version
+ */
+export function getRulesCompatibleWithVersion(version: string): BusinessRule[] {
+  return allBuiltInRules.filter(rule => {
+    if (!rule.minVersion) return true;
+    return compareVersions(version, rule.minVersion) >= 0;
+  });
+}
+
+/**
+ * Task #39: Get rules that are NOT deprecated (active rules)
+ */
+export function getActiveBuiltInRules(): BusinessRule[] {
+  return allBuiltInRules.filter(rule => !rule.deprecated);
+}
+
+/**
+ * Task #39: Compare semantic versions
+ * Returns: 1 if a > b, -1 if a < b, 0 if equal
+ */
+function compareVersions(a: string, b: string): number {
+  const partsA = a.split('.').map(Number);
+  const partsB = b.split('.').map(Number);
+
+  for (let i = 0; i < Math.max(partsA.length, partsB.length); i++) {
+    const numA = partsA[i] || 0;
+    const numB = partsB[i] || 0;
+
+    if (numA > numB) return 1;
+    if (numA < numB) return -1;
+  }
+
+  return 0;
+}
+
+/**
+ * Task #39: Get migration suggestions for deprecated rules in use
+ */
+export function getMigrationSuggestions(ruleIds: string[]): Array<{
+  ruleId: string;
+  ruleName: string;
+  deprecatedMessage?: string;
+  replacedBy?: string;
+  suggestion: string;
+}> {
+  const suggestions: Array<{
+    ruleId: string;
+    ruleName: string;
+    deprecatedMessage?: string;
+    replacedBy?: string;
+    suggestion: string;
+  }> = [];
+
+  for (const ruleId of ruleIds) {
+    const rule = allBuiltInRules.find(r => r.id === ruleId);
+    if (rule?.deprecated) {
+      let suggestion = `Rule '${rule.name}' (${rule.id}) is deprecated.`;
+
+      if (rule.deprecatedMessage) {
+        suggestion += ` ${rule.deprecatedMessage}`;
+      }
+
+      if (rule.replacedBy) {
+        const replacement = allBuiltInRules.find(r => r.id === rule.replacedBy);
+        if (replacement) {
+          suggestion += ` Migrate to '${replacement.name}' (${rule.replacedBy}).`;
+        } else {
+          suggestion += ` Recommended replacement: ${rule.replacedBy}.`;
+        }
+      }
+
+      suggestions.push({
+        ruleId: rule.id,
+        ruleName: rule.name,
+        deprecatedMessage: rule.deprecatedMessage,
+        replacedBy: rule.replacedBy,
+        suggestion
+      });
+    }
+  }
+
+  return suggestions;
+}
