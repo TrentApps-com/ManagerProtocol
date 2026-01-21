@@ -41,6 +41,40 @@ const supervisor = new AgentSupervisor({
 });
 
 // ============================================================================
+// RESPONSE SIZE LIMITS - Prevent OOM errors from large payloads
+// ============================================================================
+
+/** Maximum number of items in any list response to prevent memory exhaustion */
+const MAX_RESPONSE_ITEMS = 1000;
+
+/** Default limit for list responses when not specified */
+const DEFAULT_RESPONSE_LIMIT = 100;
+
+/** Helper to truncate arrays and add warning if truncated */
+function limitResults<T>(items: T[], limit: number = DEFAULT_RESPONSE_LIMIT, maxLimit: number = MAX_RESPONSE_ITEMS): {
+  items: T[];
+  total: number;
+  truncated: boolean;
+  warning?: string;
+  pagination?: { offset: number; limit: number; hasMore: boolean };
+} {
+  const effectiveLimit = Math.min(limit, maxLimit);
+  const total = items.length;
+  const truncated = total > effectiveLimit;
+  const limitedItems = items.slice(0, effectiveLimit);
+
+  return {
+    items: limitedItems,
+    total,
+    truncated,
+    ...(truncated && {
+      warning: `Response truncated: showing ${effectiveLimit} of ${total} items. Use limit/offset parameters for pagination.`,
+      pagination: { offset: 0, limit: effectiveLimit, hasMore: true }
+    })
+  };
+}
+
+// ============================================================================
 // COMPACT RESPONSE HELPERS - Keep MCP responses concise
 // ============================================================================
 
@@ -1675,8 +1709,14 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
 
       case 'list_pending_approvals': {
         const repo = typeof args?.repo === 'string' ? args.repo : undefined;
-        const approvals = await supervisor.getPendingApprovals(repo);
-        return resp({ count: approvals.length, approvals: approvals.map((a: any) => ({ id: a.requestId, reason: a.reason, priority: a.priority })) });
+        const allApprovals = await supervisor.getPendingApprovals(repo);
+        const result = limitResults(allApprovals, DEFAULT_RESPONSE_LIMIT);
+        return resp({
+          count: result.items.length,
+          total: result.total,
+          approvals: result.items.map((a: any) => ({ id: a.requestId, reason: a.reason, priority: a.priority })),
+          ...(result.truncated && { warning: result.warning, pagination: result.pagination })
+        });
       }
 
       case 'approve_request': {
@@ -1869,8 +1909,15 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
       // Audit & reporting
       case 'get_audit_events': {
         const validated = GetAuditEventsArgsSchema.parse(args);
-        const events = supervisor.getAuditEvents(validated);
-        return { content: [{ type: 'text', text: JSON.stringify(events, null, 2) }] };
+        const requestedLimit = validated.limit || DEFAULT_RESPONSE_LIMIT;
+        const events = supervisor.getAuditEvents({ ...validated, limit: Math.min(requestedLimit, MAX_RESPONSE_ITEMS) });
+        const result = limitResults(events, requestedLimit);
+        return resp({
+          count: result.items.length,
+          total: result.total,
+          events: result.items,
+          ...(result.truncated && { warning: result.warning, pagination: result.pagination })
+        });
       }
 
       case 'get_audit_stats': {
@@ -1887,7 +1934,22 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
       case 'export_audit_log': {
         const validated = ExportAuditLogArgsSchema.parse(args || {});
         const exported = supervisor.exportAuditLog(validated);
-        return { content: [{ type: 'text', text: exported }] };
+        // Parse exported JSON to apply limits
+        try {
+          const parsed = JSON.parse(exported);
+          if (Array.isArray(parsed)) {
+            const result = limitResults(parsed, MAX_RESPONSE_ITEMS, MAX_RESPONSE_ITEMS);
+            return resp({
+              count: result.items.length,
+              total: result.total,
+              events: result.items,
+              ...(result.truncated && { warning: result.warning, pagination: result.pagination })
+            });
+          }
+          return { content: [{ type: 'text', text: exported }] };
+        } catch {
+          return { content: [{ type: 'text', text: exported }] };
+        }
       }
 
       // Configuration
@@ -2167,7 +2229,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
         }
 
         const includeHealth = args?.includeHealth !== false;
-        const result = apps.map(app => {
+        const limited = limitResults(apps, DEFAULT_RESPONSE_LIMIT);
+        const mappedApps = limited.items.map((app: { id: string; [key: string]: unknown }) => {
           const base = { ...app };
           if (includeHealth) {
             return {
@@ -2178,7 +2241,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
           return base;
         });
 
-        return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+        return resp({
+          count: mappedApps.length,
+          total: limited.total,
+          apps: mappedApps,
+          ...(limited.truncated && { warning: limited.warning, pagination: limited.pagination })
+        });
       }
 
       case 'get_app_status': {
@@ -2382,7 +2450,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
 
       case 'get_tasks': {
         const validated = GetTasksArgsSchema.parse(args || {});
-        const tasks = await taskManager.getTasksByProject(
+        const allTasks = await taskManager.getTasksByProject(
           validated.projectName,
           {
             status: validated.status,
@@ -2391,14 +2459,26 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
             labels: validated.labels
           }
         );
-        return resp({ count: tasks.length, tasks: tasks.map(slimTask) });
+        const result = limitResults(allTasks, DEFAULT_RESPONSE_LIMIT);
+        return resp({
+          count: result.items.length,
+          total: result.total,
+          tasks: result.items.map(slimTask),
+          ...(result.truncated && { warning: result.warning, pagination: result.pagination })
+        });
       }
 
       case 'get_pending_tasks': {
         const projectName = typeof args?.projectName === 'string' ? args.projectName : undefined;
         const tasks = await taskManager.getPendingTasks(projectName);
         const approvedTasks = tasks.filter(task => !task.labels?.includes('needs-approval'));
-        return resp({ count: approvedTasks.length, tasks: approvedTasks.map(slimTask) });
+        const result = limitResults(approvedTasks, DEFAULT_RESPONSE_LIMIT);
+        return resp({
+          count: result.items.length,
+          total: result.total,
+          tasks: result.items.map(slimTask),
+          ...(result.truncated && { warning: result.warning, pagination: result.pagination })
+        });
       }
 
       case 'get_approved_tasks': {
@@ -2408,7 +2488,13 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
           (task.status === 'pending' || task.status === 'in_progress') &&
           task.labels?.includes('approved')
         );
-        return resp({ count: approvedTasks.length, tasks: approvedTasks.map(slimTask) });
+        const result = limitResults(approvedTasks, DEFAULT_RESPONSE_LIMIT);
+        return resp({
+          count: result.items.length,
+          total: result.total,
+          tasks: result.items.map(slimTask),
+          ...(result.truncated && { warning: result.warning, pagination: result.pagination })
+        });
       }
 
       case 'get_task': {
@@ -2501,12 +2587,15 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
 
       case 'search_tasks': {
         const validated = SearchTasksArgsSchema.parse(args);
-        const tasks = await taskManager.searchTasks(validated.query, validated.projectName);
-        return { content: [{ type: 'text', text: JSON.stringify({
+        const allTasks = await taskManager.searchTasks(validated.query, validated.projectName);
+        const result = limitResults(allTasks, DEFAULT_RESPONSE_LIMIT);
+        return resp({
           query: validated.query,
-          count: tasks.length,
-          tasks
-        }, null, 2) }] };
+          count: result.items.length,
+          total: result.total,
+          tasks: result.items.map(slimTask),
+          ...(result.truncated && { warning: result.warning, pagination: result.pagination })
+        });
       }
 
       default:
