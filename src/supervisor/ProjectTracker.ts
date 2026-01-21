@@ -783,4 +783,4 @@ export const projectTracker = new ProjectTracker();
 // Cleanup old data every hour
 setInterval(() => {
   projectTracker.cleanup();
-}, 60 * 60 * 1000);
+}, 60 * 60 * 1000).unref();
