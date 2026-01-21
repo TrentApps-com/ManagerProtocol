@@ -119,6 +119,18 @@ export class TaskManager {
   }
 
   /**
+   * Ensure a task exists before operating on it
+   * @throws Error if task is not found
+   */
+  private async ensureTaskExists(repo: string, taskId: string): Promise<ProjectTask> {
+    const task = await this.getTask(repo, taskId);
+    if (!task) {
+      throw new Error(`Task #${taskId} not found in ${repo}`);
+    }
+    return task;
+  }
+
+  /**
    * Execute a gh command and return parsed JSON output
    */
   private async execGh<T>(command: string): Promise<T> {
@@ -468,11 +480,7 @@ export class TaskManager {
       const repo = await this.resolveRepo(projectName);
 
       // Verify task exists before attempting update
-      const existingTask = await this.getTask(repo, taskId);
-      if (!existingTask) {
-        console.error(`[TaskManager] Cannot update task ${taskId}: task not found in ${repo}`);
-        return null;
-      }
+      const existingTask = await this.ensureTaskExists(repo, taskId);
 
       let cmd = `issue edit ${taskId} --repo "${repo}"`;
 
@@ -555,6 +563,9 @@ export class TaskManager {
     try {
       const repo = await this.resolveRepo(projectName);
 
+      // Verify task exists before attempting to add comment
+      await this.ensureTaskExists(repo, taskId);
+
       // Build comment body
       let body = '';
 
@@ -614,6 +625,9 @@ export class TaskManager {
     commits?: string[]
   ): Promise<ProjectTask | null> {
     const repo = await this.resolveRepo(projectName);
+
+    // Verify task exists before attempting to close
+    await this.ensureTaskExists(repo, taskId);
 
     // Add the resolution comment
     await this.addComment(repo, taskId, `**Resolution:** ${resolution}`, commits);
@@ -690,6 +704,10 @@ export class TaskManager {
     reason?: string
   ): Promise<ProjectTask | null> {
     const repo = await this.resolveRepo(projectName);
+
+    // Verify task exists before attempting to block
+    await this.ensureTaskExists(repo, taskId);
+
     if (reason) {
       await this.execGhRaw(`issue comment ${taskId} --repo "${repo}" --body ${escapeForShell(`Blocked: ${reason}`)}`);
     }
