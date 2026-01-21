@@ -3,3 +3,5 @@
  */
 
 export * from './errors.js';
+export * from './shared.js';
+export * from './rate-limiting.js';

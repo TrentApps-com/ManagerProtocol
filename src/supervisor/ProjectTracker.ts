@@ -12,6 +12,7 @@ import { exec } from 'child_process';
 import { promisify } from 'util';
 import path from 'path';
 import fs from 'fs';
+import { hashString } from '../utils/shared.js';
 
 const execAsync = promisify(exec);
 
@@ -672,7 +673,7 @@ class ProjectTracker {
   private getProjectId(projectPath: string): string {
     // Use basename as ID, or full path hash if needed
     const normalized = path.resolve(projectPath);
-    return path.basename(normalized) + '-' + this.hashString(normalized);
+    return path.basename(normalized) + '-' + this.hashStringId(normalized);
   }
 
   /**
@@ -899,15 +900,10 @@ class ProjectTracker {
 
   /**
    * Simple string hash for generating IDs
+   * Uses shared hashString utility with base36 encoding
    */
-  private hashString(str: string): string {
-    let hash = 0;
-    for (let i = 0; i < str.length; i++) {
-      const char = str.charCodeAt(i);
-      hash = ((hash << 5) - hash) + char;
-      hash = hash & hash; // Convert to 32bit integer
-    }
-    return Math.abs(hash).toString(36).substring(0, 8);
+  private hashStringId(str: string): string {
+    return hashString(str, { base: 36, length: 8 });
   }
 }
 

@@ -21,6 +21,7 @@ import path from 'path';
 import Database from 'better-sqlite3';
 import type { AuditEvent, AuditEventType, RiskLevel } from '../types/index.js';
 import { withRetry, WebhookDeliveryError, formatError } from '../utils/errors.js';
+import { calculateGroupedCounts } from '../utils/shared.js';
 
 // ============================================================================
 // QUERY BUILDER TYPES (Task #49)
@@ -1103,8 +1104,550 @@ export class AuditLogger {
     }
   }
 
+  // ============================================================================
+  // QUERY BUILDER METHODS (Task #49)
+  // ============================================================================
+
   /**
-   * Query events
+   * Create a new QueryBuilder for fluent query construction
+   *
+   * Usage:
+   * ```typescript
+   * const events = await logger.query()
+   *   .eventType('action_executed')
+   *   .since(new Date('2024-01-01'))
+   *   .limit(100)
+   *   .execute();
+   * ```
+   */
+  query(): QueryBuilder {
+    return new QueryBuilder(this);
+  }
+
+  /**
+   * Execute a query with filters (called by QueryBuilder)
+   */
+  executeQuery(
+    filters: QueryFilter,
+    pagination: PaginationOptions,
+    orderByField: string,
+    orderDirection: 'asc' | 'desc'
+  ): AuditEvent[] {
+    // Use database if available for better performance
+    if (this.db) {
+      return this.executeDbQuery(filters, pagination, orderByField, orderDirection);
+    }
+
+    // Fall back to memory-based filtering
+    return this.executeMemoryQuery(filters, pagination, orderByField, orderDirection);
+  }
+
+  /**
+   * Execute query with pagination metadata (called by QueryBuilder)
+   */
+  async executeQueryPaginated(
+    filters: QueryFilter,
+    pagination: PaginationOptions,
+    orderByField: string,
+    orderDirection: 'asc' | 'desc'
+  ): Promise<PaginatedResult<AuditEvent>> {
+    const totalCount = this.countQuery(filters);
+    const limit = pagination.limit || 100;
+
+    // If cursor is provided, decode it
+    let decodedCursor: PaginationCursor | undefined;
+    if (pagination.cursor) {
+      try {
+        decodedCursor = JSON.parse(Buffer.from(pagination.cursor, 'base64').toString('utf-8'));
+      } catch {
+        // Invalid cursor, ignore it
+      }
+    }
+
+    // Adjust filters for cursor-based pagination
+    const adjustedFilters = { ...filters };
+    if (decodedCursor) {
+      if (decodedCursor.direction === 'forward') {
+        if (orderDirection === 'desc') {
+          adjustedFilters.until = decodedCursor.timestamp;
+        } else {
+          adjustedFilters.since = decodedCursor.timestamp;
+        }
+      }
+    }
+
+    const data = this.executeQuery(adjustedFilters, { ...pagination, limit: limit + 1 }, orderByField, orderDirection);
+
+    // Check if there are more results
+    const hasMore = data.length > limit;
+    if (hasMore) {
+      data.pop(); // Remove the extra item
+    }
+
+    // Generate cursors
+    let nextCursor: string | undefined;
+    let previousCursor: string | undefined;
+
+    if (data.length > 0) {
+      const lastEvent = data[data.length - 1];
+      if (hasMore) {
+        const cursor: PaginationCursor = {
+          timestamp: lastEvent.timestamp,
+          eventId: lastEvent.eventId,
+          direction: 'forward'
+        };
+        nextCursor = Buffer.from(JSON.stringify(cursor)).toString('base64');
+      }
+
+      if (decodedCursor) {
+        const firstEvent = data[0];
+        const cursor: PaginationCursor = {
+          timestamp: firstEvent.timestamp,
+          eventId: firstEvent.eventId,
+          direction: 'backward'
+        };
+        previousCursor = Buffer.from(JSON.stringify(cursor)).toString('base64');
+      }
+    }
+
+    return {
+      data,
+      pagination: {
+        totalCount,
+        hasMore,
+        nextCursor,
+        previousCursor,
+        limit,
+        offset: pagination.offset
+      }
+    };
+  }
+
+  /**
+   * Get count of events matching filters (called by QueryBuilder)
+   */
+  countQuery(filters: QueryFilter): number {
+    if (this.db) {
+      const { whereClause, params } = this.buildWhereClause(filters);
+      const sql = `SELECT COUNT(*) as count FROM audit_events ${whereClause}`;
+
+      try {
+        const stmt = this.db.prepare(sql);
+        const result = stmt.get(...params) as { count: number };
+        return result.count;
+      } catch (error) {
+        console.error('[AuditLogger] Count query failed:', error);
+        return 0;
+      }
+    }
+
+    // Memory-based count
+    return this.filterMemoryEvents(filters).length;
+  }
+
+  /**
+   * Execute aggregation query (called by QueryBuilder)
+   */
+  aggregateQuery(filters: QueryFilter, interval?: TimeSeriesInterval): AggregationResult {
+    const events = this.db
+      ? this.executeDbQuery(filters, {}, 'timestamp', 'asc')
+      : this.filterMemoryEvents(filters);
+
+    const result: AggregationResult = {
+      byEventType: {},
+      byOutcome: {},
+      byRiskLevel: {},
+      byAgent: {},
+      byUser: {},
+      timeSeries: [],
+      total: events.length
+    };
+
+    // Build aggregations
+    const timeSeriesMap = new Map<string, { count: number; byOutcome: Record<string, number> }>();
+
+    for (const event of events) {
+      // By event type
+      result.byEventType[event.eventType] = (result.byEventType[event.eventType] || 0) + 1;
+
+      // By outcome
+      result.byOutcome[event.outcome] = (result.byOutcome[event.outcome] || 0) + 1;
+
+      // By risk level
+      if (event.riskLevel) {
+        result.byRiskLevel[event.riskLevel] = (result.byRiskLevel[event.riskLevel] || 0) + 1;
+      }
+
+      // By agent
+      if (event.agentId) {
+        result.byAgent[event.agentId] = (result.byAgent[event.agentId] || 0) + 1;
+      }
+
+      // By user
+      if (event.userId) {
+        result.byUser[event.userId] = (result.byUser[event.userId] || 0) + 1;
+      }
+
+      // Time series
+      if (interval) {
+        const bucket = this.truncateTimestamp(event.timestamp, interval);
+        let entry = timeSeriesMap.get(bucket);
+        if (!entry) {
+          entry = { count: 0, byOutcome: {} };
+          timeSeriesMap.set(bucket, entry);
+        }
+        entry.count++;
+        entry.byOutcome[event.outcome] = (entry.byOutcome[event.outcome] || 0) + 1;
+      }
+    }
+
+    // Convert time series map to array
+    if (interval) {
+      result.timeSeries = Array.from(timeSeriesMap.entries())
+        .map(([timestamp, data]) => ({
+          timestamp,
+          count: data.count,
+          byOutcome: data.byOutcome
+        }))
+        .sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+    }
+
+    return result;
+  }
+
+  /**
+   * Truncate timestamp to the specified interval for time series grouping
+   */
+  private truncateTimestamp(timestamp: string, interval: TimeSeriesInterval): string {
+    const date = new Date(timestamp);
+
+    switch (interval) {
+      case 'minute':
+        date.setSeconds(0, 0);
+        break;
+      case 'hour':
+        date.setMinutes(0, 0, 0);
+        break;
+      case 'day':
+        date.setHours(0, 0, 0, 0);
+        break;
+      case 'week': {
+        const day = date.getDay();
+        date.setDate(date.getDate() - day);
+        date.setHours(0, 0, 0, 0);
+        break;
+      }
+      case 'month':
+        date.setDate(1);
+        date.setHours(0, 0, 0, 0);
+        break;
+    }
+
+    return date.toISOString();
+  }
+
+  /**
+   * Execute query against database
+   */
+  private executeDbQuery(
+    filters: QueryFilter,
+    pagination: PaginationOptions,
+    orderByField: string,
+    orderDirection: 'asc' | 'desc'
+  ): AuditEvent[] {
+    if (!this.db) return [];
+
+    const { whereClause, params } = this.buildWhereClause(filters);
+
+    // Validate order field to prevent SQL injection
+    const allowedOrderFields = ['timestamp', 'eventType', 'action', 'outcome', 'riskLevel', 'agentId', 'userId'];
+    const safeOrderField = allowedOrderFields.includes(orderByField) ? orderByField : 'timestamp';
+    const safeDirection = orderDirection === 'asc' ? 'ASC' : 'DESC';
+
+    let sql = `SELECT * FROM audit_events ${whereClause} ORDER BY ${safeOrderField} ${safeDirection}`;
+
+    // Add pagination
+    if (pagination.limit) {
+      sql += ` LIMIT ?`;
+      params.push(pagination.limit);
+    }
+    if (pagination.offset) {
+      sql += ` OFFSET ?`;
+      params.push(pagination.offset);
+    }
+
+    try {
+      const stmt = this.db.prepare(sql);
+      const rows = stmt.all(...params) as any[];
+
+      return rows.map(row => this.rowToEvent(row));
+    } catch (error) {
+      console.error('[AuditLogger] Database query failed:', error);
+      return [];
+    }
+  }
+
+  /**
+   * Build WHERE clause from filters with parameterized queries (SQL injection safe)
+   */
+  private buildWhereClause(filters: QueryFilter): { whereClause: string; params: any[] } {
+    const conditions: string[] = [];
+    const params: any[] = [];
+
+    // Event type filter
+    if (filters.eventType) {
+      if (Array.isArray(filters.eventType)) {
+        const placeholders = filters.eventType.map(() => '?').join(', ');
+        conditions.push(`eventType IN (${placeholders})`);
+        params.push(...filters.eventType);
+      } else {
+        conditions.push('eventType = ?');
+        params.push(filters.eventType);
+      }
+    }
+
+    // Agent ID filter
+    if (filters.agentId) {
+      if (Array.isArray(filters.agentId)) {
+        const placeholders = filters.agentId.map(() => '?').join(', ');
+        conditions.push(`agentId IN (${placeholders})`);
+        params.push(...filters.agentId);
+      } else {
+        conditions.push('agentId = ?');
+        params.push(filters.agentId);
+      }
+    }
+
+    // Session ID filter
+    if (filters.sessionId) {
+      if (Array.isArray(filters.sessionId)) {
+        const placeholders = filters.sessionId.map(() => '?').join(', ');
+        conditions.push(`sessionId IN (${placeholders})`);
+        params.push(...filters.sessionId);
+      } else {
+        conditions.push('sessionId = ?');
+        params.push(filters.sessionId);
+      }
+    }
+
+    // User ID filter
+    if (filters.userId) {
+      if (Array.isArray(filters.userId)) {
+        const placeholders = filters.userId.map(() => '?').join(', ');
+        conditions.push(`userId IN (${placeholders})`);
+        params.push(...filters.userId);
+      } else {
+        conditions.push('userId = ?');
+        params.push(filters.userId);
+      }
+    }
+
+    // Outcome filter
+    if (filters.outcome) {
+      if (Array.isArray(filters.outcome)) {
+        const placeholders = filters.outcome.map(() => '?').join(', ');
+        conditions.push(`outcome IN (${placeholders})`);
+        params.push(...filters.outcome);
+      } else {
+        conditions.push('outcome = ?');
+        params.push(filters.outcome);
+      }
+    }
+
+    // Risk level filter
+    if (filters.riskLevel) {
+      if (Array.isArray(filters.riskLevel)) {
+        const placeholders = filters.riskLevel.map(() => '?').join(', ');
+        conditions.push(`riskLevel IN (${placeholders})`);
+        params.push(...filters.riskLevel);
+      } else {
+        conditions.push('riskLevel = ?');
+        params.push(filters.riskLevel);
+      }
+    }
+
+    // Date range filters
+    if (filters.since) {
+      const sinceStr = filters.since instanceof Date ? filters.since.toISOString() : filters.since;
+      conditions.push('timestamp >= ?');
+      params.push(sinceStr);
+    }
+
+    if (filters.until) {
+      const untilStr = filters.until instanceof Date ? filters.until.toISOString() : filters.until;
+      conditions.push('timestamp <= ?');
+      params.push(untilStr);
+    }
+
+    // Correlation ID filter
+    if (filters.correlationId) {
+      conditions.push('correlationId = ?');
+      params.push(filters.correlationId);
+    }
+
+    // Action partial match (case-insensitive)
+    if (filters.action) {
+      conditions.push('LOWER(action) LIKE ?');
+      params.push(`%${filters.action.toLowerCase()}%`);
+    }
+
+    // Full-text search in metadata
+    if (filters.metadataSearch) {
+      conditions.push('LOWER(metadata) LIKE ?');
+      params.push(`%${filters.metadataSearch.toLowerCase()}%`);
+    }
+
+    // Full-text search in details
+    if (filters.detailsSearch) {
+      conditions.push('LOWER(details) LIKE ?');
+      params.push(`%${filters.detailsSearch.toLowerCase()}%`);
+    }
+
+    const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+
+    return { whereClause, params };
+  }
+
+  /**
+   * Convert database row to AuditEvent
+   */
+  private rowToEvent(row: any): AuditEvent {
+    return {
+      eventId: row.eventId,
+      eventType: row.eventType,
+      action: row.action,
+      timestamp: row.timestamp,
+      outcome: row.outcome,
+      agentId: row.agentId || undefined,
+      sessionId: row.sessionId || undefined,
+      userId: row.userId || undefined,
+      riskLevel: row.riskLevel || undefined,
+      details: row.details ? JSON.parse(row.details) : undefined,
+      metadata: row.metadata ? JSON.parse(row.metadata) : undefined,
+      correlationId: row.correlationId || undefined,
+      parentEventId: row.parentEventId || undefined
+    };
+  }
+
+  /**
+   * Execute query against memory cache
+   */
+  private executeMemoryQuery(
+    filters: QueryFilter,
+    pagination: PaginationOptions,
+    orderByField: string,
+    orderDirection: 'asc' | 'desc'
+  ): AuditEvent[] {
+    let results = this.filterMemoryEvents(filters);
+
+    // Sort
+    results.sort((a, b) => {
+      const aVal = (a as any)[orderByField] || '';
+      const bVal = (b as any)[orderByField] || '';
+      const comparison = String(aVal).localeCompare(String(bVal));
+      return orderDirection === 'asc' ? comparison : -comparison;
+    });
+
+    // Pagination
+    if (pagination.offset) {
+      results = results.slice(pagination.offset);
+    }
+    if (pagination.limit) {
+      results = results.slice(0, pagination.limit);
+    }
+
+    return results;
+  }
+
+  /**
+   * Filter events from memory cache
+   */
+  private filterMemoryEvents(filters: QueryFilter): AuditEvent[] {
+    return this.events.filter(event => {
+      // Event type filter
+      if (filters.eventType) {
+        const types = Array.isArray(filters.eventType) ? filters.eventType : [filters.eventType];
+        if (!types.includes(event.eventType)) return false;
+      }
+
+      // Agent ID filter
+      if (filters.agentId) {
+        const ids = Array.isArray(filters.agentId) ? filters.agentId : [filters.agentId];
+        if (!event.agentId || !ids.includes(event.agentId)) return false;
+      }
+
+      // Session ID filter
+      if (filters.sessionId) {
+        const ids = Array.isArray(filters.sessionId) ? filters.sessionId : [filters.sessionId];
+        if (!event.sessionId || !ids.includes(event.sessionId)) return false;
+      }
+
+      // User ID filter
+      if (filters.userId) {
+        const ids = Array.isArray(filters.userId) ? filters.userId : [filters.userId];
+        if (!event.userId || !ids.includes(event.userId)) return false;
+      }
+
+      // Outcome filter
+      if (filters.outcome) {
+        const outcomes = Array.isArray(filters.outcome) ? filters.outcome : [filters.outcome];
+        if (!outcomes.includes(event.outcome)) return false;
+      }
+
+      // Risk level filter
+      if (filters.riskLevel) {
+        const levels = Array.isArray(filters.riskLevel) ? filters.riskLevel : [filters.riskLevel];
+        if (!event.riskLevel || !levels.includes(event.riskLevel)) return false;
+      }
+
+      // Date range filters
+      if (filters.since) {
+        const sinceStr = filters.since instanceof Date ? filters.since.toISOString() : filters.since;
+        if (event.timestamp < sinceStr) return false;
+      }
+
+      if (filters.until) {
+        const untilStr = filters.until instanceof Date ? filters.until.toISOString() : filters.until;
+        if (event.timestamp > untilStr) return false;
+      }
+
+      // Correlation ID filter
+      if (filters.correlationId) {
+        if (event.correlationId !== filters.correlationId) return false;
+      }
+
+      // Action partial match
+      if (filters.action) {
+        if (!event.action.toLowerCase().includes(filters.action.toLowerCase())) return false;
+      }
+
+      // Full-text search in metadata
+      if (filters.metadataSearch && event.metadata) {
+        const metadataStr = JSON.stringify(event.metadata).toLowerCase();
+        if (!metadataStr.includes(filters.metadataSearch.toLowerCase())) return false;
+      } else if (filters.metadataSearch && !event.metadata) {
+        return false;
+      }
+
+      // Full-text search in details
+      if (filters.detailsSearch && event.details) {
+        const detailsStr = JSON.stringify(event.details).toLowerCase();
+        if (!detailsStr.includes(filters.detailsSearch.toLowerCase())) return false;
+      } else if (filters.detailsSearch && !event.details) {
+        return false;
+      }
+
+      return true;
+    });
+  }
+
+  // ============================================================================
+  // LEGACY QUERY METHODS (preserved for backward compatibility)
+  // ============================================================================
+
+  /**
+   * Query events (legacy method - consider using query() instead)
+   * @deprecated Use query() for more powerful filtering options
    */
   getEvents(filter?: {
     eventType?: AuditEventType;
@@ -1181,6 +1724,7 @@ export class AuditLogger {
 
   /**
    * Get summary statistics
+   * Uses shared calculateGroupedCounts utility for consistency
    */
   getStats(since?: string): {
     total: number;
@@ -1190,20 +1734,15 @@ export class AuditLogger {
   } {
     let events = this.events;
     if (since) {
-      events = events.filter(e => e.timestamp >= since);
+      // Use time window for filtering if a time-based since is provided
+      const sinceTime = new Date(since).getTime();
+      events = events.filter(e => new Date(e.timestamp).getTime() >= sinceTime);
     }
 
-    const byType: Record<string, number> = {};
-    const byOutcome: Record<string, number> = {};
-    const byRiskLevel: Record<string, number> = {};
-
-    for (const event of events) {
-      byType[event.eventType] = (byType[event.eventType] || 0) + 1;
-      byOutcome[event.outcome] = (byOutcome[event.outcome] || 0) + 1;
-      if (event.riskLevel) {
-        byRiskLevel[event.riskLevel] = (byRiskLevel[event.riskLevel] || 0) + 1;
-      }
-    }
+    // Use shared utility for grouped counts
+    const byType = calculateGroupedCounts(events, e => e.eventType);
+    const byOutcome = calculateGroupedCounts(events, e => e.outcome);
+    const byRiskLevel = calculateGroupedCounts(events, e => e.riskLevel);
 
     return {
       total: events.length,
