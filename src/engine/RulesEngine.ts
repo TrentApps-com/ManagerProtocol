@@ -21,6 +21,8 @@ import type {
 export class RulesEngine {
   private rules: Map<string, BusinessRule> = new Map();
   private customEvaluators: Map<string, (context: Record<string, unknown>, condition: RuleCondition) => boolean> = new Map();
+  // Task #53: Cache for compiled evaluators - keyed by evaluator name/string representation
+  private evaluatorCache: Map<string, (context: Record<string, unknown>, condition: RuleCondition) => boolean> = new Map();
 
   constructor() {
     this.registerDefaultEvaluators();
@@ -28,9 +30,11 @@ export class RulesEngine {
 
   /**
    * Register a business rule
+   * Task #53: Clear evaluator cache when rules change to ensure fresh compilation
    */
   registerRule(rule: BusinessRule): void {
     this.rules.set(rule.id, rule);
+    this.clearEvaluatorCache();
   }
 
   /**
@@ -44,9 +48,22 @@ export class RulesEngine {
 
   /**
    * Unregister a rule by ID
+   * Task #53: Clear evaluator cache when rules change
    */
   unregisterRule(ruleId: string): boolean {
-    return this.rules.delete(ruleId);
+    const result = this.rules.delete(ruleId);
+    if (result) {
+      this.clearEvaluatorCache();
+    }
+    return result;
+  }
+
+  /**
+   * Task #53: Clear the evaluator cache
+   * Called when rules are modified to ensure fresh compilation
+   */
+  private clearEvaluatorCache(): void {
+    this.evaluatorCache.clear();
   }
 
   /**
@@ -67,12 +84,14 @@ export class RulesEngine {
 
   /**
    * Register a custom condition evaluator
+   * Task #53: Clear evaluator cache when custom evaluators change
    */
   registerCustomEvaluator(
     name: string,
     evaluator: (context: Record<string, unknown>, condition: RuleCondition) => boolean
   ): void {
     this.customEvaluators.set(name, evaluator);
+    this.clearEvaluatorCache();
   }
 
   /**
@@ -95,11 +114,22 @@ export class RulesEngine {
     // Get active rules and evaluate
     const activeRules = this.getActiveRules();
 
+    // Task #57: Track total priority weight for normalization
+    let totalPriorityWeight = 0;
+    let weightedRiskSum = 0;
+
     for (const rule of activeRules) {
       const ruleMatches = this.evaluateRuleConditions(rule, evalContext);
 
       if (ruleMatches) {
         appliedRules.push(rule.id);
+
+        // Task #57: Weight risk by rule priority (0-1000 scale)
+        // Higher priority rules have more impact on final score
+        const priorityMultiplier = (rule.priority + 100) / 100; // Ensure minimum weight of 1
+        const weightedRisk = rule.riskWeight * priorityMultiplier;
+        weightedRiskSum += weightedRisk;
+        totalPriorityWeight += priorityMultiplier;
         totalRiskWeight += rule.riskWeight;
 
         // Process rule actions
@@ -142,8 +172,11 @@ export class RulesEngine {
       }
     }
 
-    // Calculate risk score (0-100)
-    const riskScore = Math.min(100, totalRiskWeight);
+    // Task #57: Calculate risk score using priority-weighted average (0-100)
+    // If no rules matched, use raw total; otherwise use weighted calculation
+    const riskScore = totalPriorityWeight > 0
+      ? Math.min(100, weightedRiskSum / totalPriorityWeight)
+      : Math.min(100, totalRiskWeight);
     const riskLevel = this.calculateRiskLevel(riskScore);
 
     // Determine final status
@@ -369,9 +402,30 @@ export class RulesEngine {
 
       case 'custom':
         if (condition.customEvaluator) {
-          const evaluator = this.customEvaluators.get(condition.customEvaluator);
+          // Task #53: Check cache first for compiled evaluator
+          const cacheKey = condition.customEvaluator;
+          let evaluator = this.evaluatorCache.get(cacheKey);
+
+          if (!evaluator) {
+            evaluator = this.customEvaluators.get(condition.customEvaluator);
+            if (evaluator) {
+              // Cache the evaluator for future use
+              this.evaluatorCache.set(cacheKey, evaluator);
+            }
+          }
+
           if (evaluator) {
-            return evaluator(context, condition);
+            // Task #56: Add try-catch around custom evaluator execution
+            try {
+              return evaluator(context, condition);
+            } catch (error) {
+              // Log error and treat failed evaluator as non-matching condition
+              console.error(
+                `Custom evaluator '${condition.customEvaluator}' threw an exception:`,
+                error instanceof Error ? error.message : String(error)
+              );
+              return false;
+            }
           }
         }
         return false;
