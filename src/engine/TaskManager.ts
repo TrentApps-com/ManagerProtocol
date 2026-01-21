@@ -1,27 +1,23 @@
 /**
  * Enterprise Agent Supervisor - Task Manager
  *
- * Manages project tasks using GitHub Issues via the `gh` CLI.
+ * Manages project tasks using GitHub Issues via the Octokit API.
  * Tasks are stored as GitHub Issues, providing persistence and visibility.
  *
  * Features:
  * - Auto-detects repo from current directory if not specified
  * - Creates priority/status labels automatically
  * - Caches repo detection for performance
- * - Full GitHub Issues integration
+ * - Full GitHub Issues integration via Octokit
  */
 
-import { exec } from 'child_process';
-import { promisify } from 'util';
 import type {
   ProjectTask,
   TaskPriority,
   TaskStatus
 } from '../types/index.js';
 import { auditLogger } from './AuditLogger.js';
-import { escapeForShell } from '../utils/shell.js';
-
-const execAsync = promisify(exec);
+import { GitHubClient, GitHubIssue, gitHubClient } from './GitHubClient.js';
 
 export interface TaskManagerOptions {
   defaultLabels?: string[];
@@ -29,78 +25,39 @@ export interface TaskManagerOptions {
   statusLabelPrefix?: string;
 }
 
-// GitHub Issue structure from gh CLI
-interface GitHubIssue {
-  number: number;
-  title: string;
-  body: string;
-  state: 'OPEN' | 'CLOSED';
-  labels: Array<{ name: string }>;
-  assignees: Array<{ login: string }>;
-  createdAt: string;
-  updatedAt: string;
-  closedAt: string | null;
-  url: string;
-  milestone?: { title: string } | null;
-}
-
-interface GitHubLabel {
-  name: string;
-  color: string;
-  description: string;
-}
-
 export class TaskManager {
   private priorityPrefix: string;
   private statusPrefix: string;
   private cachedRepo: string | null = null;
   private initializedLabels: Set<string> = new Set();
-  private ghVerified: boolean = false;
+  private client: GitHubClient;
 
   constructor(options: TaskManagerOptions = {}) {
     this.priorityPrefix = options.priorityLabelPrefix || 'priority:';
     this.statusPrefix = options.statusLabelPrefix || 'status:';
+    this.client = gitHubClient;
   }
 
   /**
-   * Verify gh CLI is installed and authenticated
+   * Verify GitHub API authentication
    */
   async verifyGh(): Promise<{ ok: boolean; error?: string; user?: string }> {
-    if (this.ghVerified) return { ok: true };
-
-    try {
-      const { stdout } = await execAsync('gh auth status --json user 2>&1 || gh auth status');
-      this.ghVerified = true;
-
-      // Try to extract user
-      try {
-        const status = JSON.parse(stdout);
-        return { ok: true, user: status.user };
-      } catch {
-        return { ok: true };
-      }
-    } catch (error: any) {
-      return {
-        ok: false,
-        error: 'gh CLI not authenticated. Run: gh auth login'
-      };
-    }
+    return this.client.verifyAuth();
   }
 
   /**
-   * Get the current repo from git remote or gh CLI
+   * Get the current repo from git remote
    */
   async getCurrentRepo(): Promise<string | null> {
     if (this.cachedRepo) return this.cachedRepo;
 
-    try {
-      // Try to get repo from current directory
-      const { stdout } = await execAsync('gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null');
-      this.cachedRepo = stdout.trim();
+    const repo = await this.client.getCurrentRepo();
+    if (repo) {
+      this.cachedRepo = `${repo.owner}/${repo.repo}`;
       return this.cachedRepo;
-    } catch {
-      return null;
     }
+
+    return null;
   }
 
   /**
@@ -119,6 +76,13 @@ export class TaskManager {
   }
 
   /**
+   * Parse repo string into owner/repo components
+   */
+  private parseRepo(repoString: string): { owner: string; repo: string } {
+    return this.client.parseRepo(repoString);
+  }
+
+  /**
    * Ensure a task exists before operating on it
    * @throws Error if task is not found
    */
@@ -128,49 +92,6 @@ export class TaskManager {
       throw new Error(`Task #${taskId} not found in ${repo}`);
     }
     return task;
-  }
-
-  /**
-   * Execute a gh command and return parsed JSON output
-   */
-  private async execGh<T>(command: string): Promise<T> {
-    try {
-      const { stdout } = await execAsync(`gh ${command}`, {
-        maxBuffer: 10 * 1024 * 1024
-      });
-      return JSON.parse(stdout || '[]') as T;
-    } catch (error: any) {
-      if (error.stdout === '' || error.stdout === '[]') {
-        return [] as T;
-      }
-
-      // Parse error message for better feedback
-      const errMsg = error.stderr || error.message || 'Unknown error';
-      if (errMsg.includes('Could not resolve to a Repository')) {
-        throw new Error(`Repository not found. Check the repo name format (owner/repo).`);
-      }
-      if (errMsg.includes('HTTP 404')) {
-        throw new Error(`Not found - check repository access permissions.`);
-      }
-      if (errMsg.includes('HTTP 401') || errMsg.includes('authentication')) {
-        throw new Error(`Authentication failed. Run: gh auth login`);
-      }
-
-      throw new Error(`gh command failed: ${errMsg}`);
-    }
-  }
-
-  /**
-   * Execute a gh command without JSON output
-   */
-  private async execGhRaw(command: string): Promise<string> {
-    try {
-      const { stdout } = await execAsync(`gh ${command}`);
-      return stdout.trim();
-    } catch (error: any) {
-      const errMsg = error.stderr || error.message || 'Unknown error';
-      throw new Error(`gh command failed: ${errMsg}`);
-    }
   }
 
   /**
@@ -192,30 +113,31 @@ export class TaskManager {
       'needs-approval': 'FF6B6B',
     };
 
+    const { owner, repo: repoName } = this.parseRepo(repo);
+
     try {
       // Check if label exists
-      await this.execGh<GitHubLabel>(`label view "${labelName}" --repo "${repo}" --json name`);
+      const existing = await this.client.getLabel(owner, repoName, labelName);
+      if (existing) {
+        this.initializedLabels.add(cacheKey);
+        return;
+      }
+
+      // Label doesn't exist, create it
+      const color = labelColors[labelName] || '666666';
+      const description = labelName.startsWith(this.priorityPrefix)
+        ? `Priority: ${labelName.replace(this.priorityPrefix, '')}`
+        : labelName.startsWith(this.statusPrefix)
+          ? `Status: ${labelName.replace(this.statusPrefix, '')}`
+          : labelName === 'needs-approval'
+            ? 'Significant change requiring approval before implementation'
+            : '';
+
+      await this.client.createLabel(owner, repoName, labelName, color, description || undefined);
       this.initializedLabels.add(cacheKey);
     } catch {
-      // Label doesn't exist, create it
-      try {
-        const color = labelColors[labelName] || '666666';
-        const description = labelName.startsWith(this.priorityPrefix)
-          ? `Priority: ${labelName.replace(this.priorityPrefix, '')}`
-          : labelName.startsWith(this.statusPrefix)
-            ? `Status: ${labelName.replace(this.statusPrefix, '')}`
-            : labelName === 'needs-approval'
-              ? 'Significant change requiring approval before implementation'
-              : '';
-
-        await this.execGhRaw(
-          `label create "${labelName}" --repo "${repo}" --color "${color}" --description "${description}" --force`
-        );
-        this.initializedLabels.add(cacheKey);
-      } catch {
-        // Label creation failed, might be permissions - continue anyway
-        this.initializedLabels.add(cacheKey);
-      }
+      // Label creation failed, might be permissions - continue anyway
+      this.initializedLabels.add(cacheKey);
     }
   }
 
@@ -230,14 +152,14 @@ export class TaskManager {
     const priority = (priorityLabel?.replace(this.priorityPrefix, '') || 'medium') as TaskPriority;
 
     // Extract status from labels or state
-    let status: TaskStatus = issue.state === 'OPEN' ? 'pending' : 'completed';
+    let status: TaskStatus = issue.state === 'open' ? 'pending' : 'completed';
     const statusLabel = labels.find(l => l.startsWith(this.statusPrefix));
     if (statusLabel) {
       const labelStatus = statusLabel.replace(this.statusPrefix, '');
       if (['pending', 'in_progress', 'completed', 'blocked', 'cancelled'].includes(labelStatus)) {
         status = labelStatus as TaskStatus;
       }
-    } else if (issue.state === 'OPEN') {
+    } else if (issue.state === 'open') {
       if (labels.includes('in-progress') || labels.includes('wip')) {
         status = 'in_progress';
       }
@@ -258,18 +180,18 @@ export class TaskManager {
       description: issue.body || undefined,
       status,
       priority,
-      assignee: issue.assignees[0]?.login,
+      assignee: issue.assignees?.[0]?.login,
       labels: cleanLabels.length > 0 ? cleanLabels : undefined,
       dueDate: issue.milestone?.title,
-      createdAt: issue.createdAt,
-      updatedAt: issue.updatedAt,
-      completedAt: issue.closedAt || undefined,
-      metadata: { url: issue.url }
+      createdAt: issue.created_at,
+      updatedAt: issue.updated_at,
+      completedAt: issue.closed_at || undefined,
+      metadata: { url: issue.html_url }
     };
   }
 
   /**
-   * Build labels array for gh command
+   * Build labels array for issue
    */
   private buildLabels(priority?: TaskPriority, status?: TaskStatus, labels?: string[]): string[] {
     const allLabels: string[] = [];
@@ -310,6 +232,7 @@ export class TaskManager {
     needsApproval?: boolean;
   }): Promise<ProjectTask> {
     const repo = await this.resolveRepo(params.projectName);
+    const { owner, repo: repoName } = this.parseRepo(repo);
     const allLabels = this.buildLabels(params.priority, 'pending', params.labels);
 
     // Add needs-approval label if flagged
@@ -324,39 +247,30 @@ export class TaskManager {
       }
     }
 
-    // Build the gh issue create command
-    let cmd = `issue create --repo "${repo}" --title ${escapeForShell(params.title)}`;
-
-    if (params.description) {
-      cmd += ` --body ${escapeForShell(params.description)}`;
-    }
-
-    if (allLabels.length > 0) {
-      cmd += ` --label ${escapeForShell(allLabels.join(','))}`;
-    }
-
+    // Handle @me assignee - need to resolve to actual username
+    let assignees: string[] | undefined;
     if (params.assignee) {
-      // Handle @me specially
-      const assignee = params.assignee === '@me' ? '@me' : params.assignee;
-      cmd += ` --assignee ${escapeForShell(assignee)}`;
+      if (params.assignee === '@me') {
+        const auth = await this.client.verifyAuth();
+        if (auth.ok && auth.user) {
+          assignees = [auth.user];
+        }
+      } else {
+        assignees = [params.assignee];
+      }
     }
 
-    // Create the issue - gh issue create returns the URL, not JSON
-    const issueUrl = await this.execGhRaw(cmd);
+    // Create the issue
+    const issue = await this.client.createIssue({
+      owner,
+      repo: repoName,
+      title: params.title,
+      body: params.description,
+      labels: allLabels.length > 0 ? allLabels : undefined,
+      assignees,
+    });
 
-    // Extract issue number from URL (e.g., https://github.com/owner/repo/issues/123)
-    const issueNumberMatch = issueUrl.match(/\/issues\/(\d+)/);
-    if (!issueNumberMatch) {
-      throw new Error(`Failed to parse issue number from: ${issueUrl}`);
-    }
-    const issueNumber = issueNumberMatch[1];
-
-    // Fetch the full issue details
-    const result = await this.execGh<GitHubIssue>(
-      `issue view ${issueNumber} --repo "${repo}" --json number,title,body,state,labels,assignees,createdAt,updatedAt,closedAt,url`
-    );
-
-    const task = this.issueToTask(result, repo);
+    const task = this.issueToTask(issue, repo);
 
     await auditLogger.log({
       eventType: 'action_executed',
@@ -367,7 +281,7 @@ export class TaskManager {
         projectName: repo,
         title: params.title,
         priority: task.priority,
-        ghIssueUrl: result.url
+        ghIssueUrl: issue.html_url
       }
     });
 
@@ -383,56 +297,62 @@ export class TaskManager {
     assignee?: string;
     labels?: string[];
   }): Promise<ProjectTask[]> {
-    const repo = await this.resolveRepo(projectName);
+    try {
+      const repo = await this.resolveRepo(projectName);
+      const { owner, repo: repoName } = this.parseRepo(repo);
 
-    let stateFilter = 'all';
-    if (filter?.status === 'completed' || filter?.status === 'cancelled') {
-      stateFilter = 'closed';
-    } else if (filter?.status) {
-      // Status is pending, in_progress, or blocked - use open issues
-      stateFilter = 'open';
+      let stateFilter: 'open' | 'closed' | 'all' = 'all';
+      if (filter?.status === 'completed' || filter?.status === 'cancelled') {
+        stateFilter = 'closed';
+      } else if (filter?.status) {
+        // Status is pending, in_progress, or blocked - use open issues
+        stateFilter = 'open';
+      }
+
+      // Build labels filter
+      const labelFilters: string[] = [];
+      if (filter?.priority) {
+        labelFilters.push(`${this.priorityPrefix}${filter.priority}`);
+      }
+      if (filter?.status && !['pending', 'completed'].includes(filter.status)) {
+        labelFilters.push(`${this.statusPrefix}${filter.status}`);
+      }
+      if (filter?.labels) {
+        labelFilters.push(...filter.labels);
+      }
+
+      const issues = await this.client.listIssues({
+        owner,
+        repo: repoName,
+        state: stateFilter,
+        labels: labelFilters.length > 0 ? labelFilters.join(',') : undefined,
+        assignee: filter?.assignee,
+        per_page: 100,
+      });
+
+      let tasks = issues.map(issue => this.issueToTask(issue, repo));
+
+      if (filter?.status) {
+        tasks = tasks.filter(t => t.status === filter.status);
+      }
+
+      const priorityOrder: Record<TaskPriority, number> = {
+        critical: 0,
+        high: 1,
+        medium: 2,
+        low: 3
+      };
+
+      return tasks.sort((a, b) => {
+        const priorityDiff = priorityOrder[a.priority] - priorityOrder[b.priority];
+        if (priorityDiff !== 0) return priorityDiff;
+        return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
+      });
+    } catch (error) {
+      // Return empty array for 404 errors (repo doesn't exist or no access)
+      // This maintains backward compatibility with the gh CLI version
+      return [];
     }
-
-    let cmd = `issue list --repo "${repo}" --state ${stateFilter} --json number,title,body,state,labels,assignees,createdAt,updatedAt,closedAt,url --limit 100`;
-
-    const labelFilters: string[] = [];
-    if (filter?.priority) {
-      labelFilters.push(`${this.priorityPrefix}${filter.priority}`);
-    }
-    if (filter?.status && !['pending', 'completed'].includes(filter.status)) {
-      labelFilters.push(`${this.statusPrefix}${filter.status}`);
-    }
-    if (filter?.labels) {
-      labelFilters.push(...filter.labels);
-    }
-
-    if (labelFilters.length > 0) {
-      cmd += ` --label ${escapeForShell(labelFilters.join(','))}`;
-    }
-
-    if (filter?.assignee) {
-      cmd += ` --assignee ${escapeForShell(filter.assignee)}`;
-    }
-
-    const issues = await this.execGh<GitHubIssue[]>(cmd);
-    let tasks = issues.map(issue => this.issueToTask(issue, repo));
-
-    if (filter?.status) {
-      tasks = tasks.filter(t => t.status === filter.status);
-    }
-
-    const priorityOrder: Record<TaskPriority, number> = {
-      critical: 0,
-      high: 1,
-      medium: 2,
-      low: 3
-    };
-
-    return tasks.sort((a, b) => {
-      const priorityDiff = priorityOrder[a.priority] - priorityOrder[b.priority];
-      if (priorityDiff !== 0) return priorityDiff;
-      return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
-    });
   }
 
   /**
@@ -455,9 +375,8 @@ export class TaskManager {
   async getTask(projectName: string | undefined, taskId: string): Promise<ProjectTask | null> {
     try {
       const repo = await this.resolveRepo(projectName);
-      const issue = await this.execGh<GitHubIssue>(
-        `issue view ${taskId} --repo "${repo}" --json number,title,body,state,labels,assignees,createdAt,updatedAt,closedAt,url`
-      );
+      const { owner, repo: repoName } = this.parseRepo(repo);
+      const issue = await this.client.getIssue(owner, repoName, parseInt(taskId, 10));
       return this.issueToTask(issue, repo);
     } catch {
       return null;
@@ -478,18 +397,33 @@ export class TaskManager {
   ): Promise<ProjectTask | null> {
     try {
       const repo = await this.resolveRepo(projectName);
+      const { owner, repo: repoName } = this.parseRepo(repo);
+      const issueNumber = parseInt(taskId, 10);
 
       // Verify task exists before attempting update
       const existingTask = await this.ensureTaskExists(repo, taskId);
 
-      let cmd = `issue edit ${taskId} --repo "${repo}"`;
+      // Build update params
+      const updateParams: {
+        owner: string;
+        repo: string;
+        issue_number: number;
+        title?: string;
+        body?: string;
+        labels?: string[];
+        assignees?: string[];
+      } = {
+        owner,
+        repo: repoName,
+        issue_number: issueNumber,
+      };
 
       if (updates.title) {
-        cmd += ` --title ${escapeForShell(updates.title)}`;
+        updateParams.title = updates.title;
       }
 
       if (updates.description !== undefined) {
-        cmd += ` --body ${escapeForShell(updates.description || '')}`;
+        updateParams.body = updates.description || '';
       }
 
       if (updates.priority || updates.labels) {
@@ -505,16 +439,15 @@ export class TaskManager {
           }
         }
 
-        if (newLabels.length > 0) {
-          cmd += ` --add-label ${escapeForShell(newLabels.join(','))}`;
-        }
+        // Get existing labels and merge with new ones
+        updateParams.labels = newLabels;
       }
 
       if (updates.assignee) {
-        cmd += ` --add-assignee ${escapeForShell(updates.assignee)}`;
+        updateParams.assignees = [updates.assignee];
       }
 
-      await this.execGhRaw(cmd);
+      await this.client.updateIssue(updateParams);
 
       // Add comment if provided (with optional commit links)
       if (updates.comment || updates.commits?.length) {
@@ -562,6 +495,8 @@ export class TaskManager {
   ): Promise<boolean> {
     try {
       const repo = await this.resolveRepo(projectName);
+      const { owner, repo: repoName } = this.parseRepo(repo);
+      const issueNumber = parseInt(taskId, 10);
 
       // Verify task exists before attempting to add comment
       await this.ensureTaskExists(repo, taskId);
@@ -588,7 +523,7 @@ export class TaskManager {
         return false;
       }
 
-      await this.execGhRaw(`issue comment ${taskId} --repo "${repo}" --body ${escapeForShell(body)}`);
+      await this.client.addComment(owner, repoName, issueNumber, body);
 
       await auditLogger.log({
         eventType: 'action_executed',
@@ -646,15 +581,17 @@ export class TaskManager {
   ): Promise<ProjectTask | null> {
     try {
       const repo = await this.resolveRepo(projectName);
+      const { owner, repo: repoName } = this.parseRepo(repo);
+      const issueNumber = parseInt(taskId, 10);
 
       // Close or reopen based on status
       if (status === 'completed' || status === 'cancelled') {
-        const reason = status === 'cancelled' ? ' --reason "not planned"' : '';
-        await this.execGhRaw(`issue close ${taskId} --repo "${repo}"${reason}`);
+        const reason = status === 'cancelled' ? 'not_planned' : 'completed';
+        await this.client.closeIssue(owner, repoName, issueNumber, reason);
       } else {
         const task = await this.getTask(repo, taskId);
         if (task?.status === 'completed' || task?.status === 'cancelled') {
-          await this.execGhRaw(`issue reopen ${taskId} --repo "${repo}"`);
+          await this.client.reopenIssue(owner, repoName, issueNumber);
         }
       }
 
@@ -662,14 +599,14 @@ export class TaskManager {
       if (status !== 'pending' && status !== 'completed') {
         const statusLabel = `${this.statusPrefix}${status}`;
         await this.ensureLabel(repo, statusLabel);
-        await this.execGhRaw(`issue edit ${escapeForShell(taskId)} --repo ${escapeForShell(repo)} --add-label ${escapeForShell(statusLabel)}`);
+        await this.client.addLabels(owner, repoName, issueNumber, [statusLabel]);
       }
 
       // Remove old status labels
       const oldStatuses = ['in_progress', 'blocked', 'cancelled'].filter(s => s !== status);
       for (const oldStatus of oldStatuses) {
         try {
-          await this.execGhRaw(`issue edit ${escapeForShell(taskId)} --repo ${escapeForShell(repo)} --remove-label ${escapeForShell(this.statusPrefix + oldStatus)}`);
+          await this.client.removeLabel(owner, repoName, issueNumber, `${this.statusPrefix}${oldStatus}`);
         } catch {
           // Ignore - label might not exist
         }
@@ -704,12 +641,14 @@ export class TaskManager {
     reason?: string
   ): Promise<ProjectTask | null> {
     const repo = await this.resolveRepo(projectName);
+    const { owner, repo: repoName } = this.parseRepo(repo);
+    const issueNumber = parseInt(taskId, 10);
 
     // Verify task exists before attempting to block
     await this.ensureTaskExists(repo, taskId);
 
     if (reason) {
-      await this.execGhRaw(`issue comment ${taskId} --repo "${repo}" --body ${escapeForShell(`Blocked: ${reason}`)}`);
+      await this.client.addComment(owner, repoName, issueNumber, `Blocked: ${reason}`);
     }
     return this.updateTaskStatus(repo, taskId, 'blocked');
   }
@@ -720,7 +659,10 @@ export class TaskManager {
   async deleteTask(projectName: string | undefined, taskId: string): Promise<boolean> {
     try {
       const repo = await this.resolveRepo(projectName);
-      await this.execGhRaw(`issue close ${taskId} --repo "${repo}" --reason "not planned"`);
+      const { owner, repo: repoName } = this.parseRepo(repo);
+      const issueNumber = parseInt(taskId, 10);
+
+      await this.client.closeIssue(owner, repoName, issueNumber, 'not_planned');
 
       await auditLogger.log({
         eventType: 'action_executed',
@@ -746,9 +688,7 @@ export class TaskManager {
     completedCount: number;
   }>> {
     try {
-      const repos = await this.execGh<Array<{ nameWithOwner: string }>>(
-        'repo list --limit 20 --json nameWithOwner'
-      );
+      const repos = await this.client.listRepos(20);
 
       const projects: Array<{
         name: string;
@@ -761,9 +701,11 @@ export class TaskManager {
       const results = await Promise.allSettled(
         repos.slice(0, 10).map(async (repo) => {
           try {
+            const { owner, repo: repoName } = this.parseRepo(repo.nameWithOwner);
+
             const [openIssues, closedIssues] = await Promise.all([
-              this.execGh<GitHubIssue[]>(`issue list --repo "${repo.nameWithOwner}" --state open --json number,labels --limit 100`),
-              this.execGh<GitHubIssue[]>(`issue list --repo "${repo.nameWithOwner}" --state closed --json number --limit 100`)
+              this.client.listIssues({ owner, repo: repoName, state: 'open', per_page: 100 }),
+              this.client.listIssues({ owner, repo: repoName, state: 'closed', per_page: 100 })
             ]);
 
             const inProgressCount = openIssues.filter(i =>
@@ -811,12 +753,12 @@ export class TaskManager {
   } | null> {
     try {
       const repo = await this.resolveRepo(projectName);
+      const { owner, repo: repoName } = this.parseRepo(repo);
 
-      // Fetch only minimal fields needed for stats (labels, closedAt)
-      // Increased limit to 500 to capture more tasks for accurate stats
+      // Fetch issues for stats
       const [openIssues, closedIssues] = await Promise.all([
-        this.execGh<Array<{ labels: GitHubLabel[] }>>(`issue list --repo "${repo}" --state open --json labels --limit 500`),
-        this.execGh<Array<{ labels: GitHubLabel[]; closedAt?: string }>>(`issue list --repo "${repo}" --state closed --json labels,closedAt --limit 500`)
+        this.client.listIssues({ owner, repo: repoName, state: 'open', per_page: 100 }),
+        this.client.listIssues({ owner, repo: repoName, state: 'closed', per_page: 100 })
       ]);
 
       const byStatus: Record<string, number> = {};
@@ -851,7 +793,7 @@ export class TaskManager {
         byPriority[priority] = (byPriority[priority] || 0) + 1;
 
         // Count completed this week
-        if (issue.closedAt && new Date(issue.closedAt) >= oneWeekAgo) {
+        if (issue.closed_at && new Date(issue.closed_at) >= oneWeekAgo) {
           completedThisWeek++;
         }
       }
@@ -876,16 +818,16 @@ export class TaskManager {
    */
   async searchTasks(query: string, projectName?: string): Promise<ProjectTask[]> {
     try {
-      let cmd = `issue list --search ${escapeForShell(query)} --state all --json number,title,body,state,labels,assignees,createdAt,updatedAt,closedAt,url --limit 50`;
+      let searchQuery = query;
 
       if (projectName) {
-        cmd += ` --repo ${escapeForShell(projectName)}`;
+        searchQuery = `repo:${projectName} ${query}`;
       }
 
-      const issues = await this.execGh<GitHubIssue[]>(cmd);
+      const issues = await this.client.searchIssues({ query: searchQuery, per_page: 50 });
 
       return issues.map(issue => {
-        const repoMatch = issue.url.match(/github\.com\/([^/]+\/[^/]+)\//);
+        const repoMatch = issue.html_url.match(/github\.com\/([^/]+\/[^/]+)\//);
         const repo = repoMatch ? repoMatch[1] : projectName || 'unknown';
         return this.issueToTask(issue, repo);
       });
@@ -899,9 +841,15 @@ export class TaskManager {
    */
   async clearCompletedTasks(projectName?: string): Promise<number> {
     const repo = await this.resolveRepo(projectName);
-    const closedIssues = await this.execGh<GitHubIssue[]>(
-      `issue list --repo "${repo}" --state closed --json number --limit 100`
-    );
+    const { owner, repo: repoName } = this.parseRepo(repo);
+
+    const closedIssues = await this.client.listIssues({
+      owner,
+      repo: repoName,
+      state: 'closed',
+      per_page: 100
+    });
+
     return closedIssues.length;
   }
 }
