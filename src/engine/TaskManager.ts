@@ -320,13 +320,13 @@ export class TaskManager {
     }
 
     if (allLabels.length > 0) {
-      cmd += ` --label "${allLabels.join(',')}"`;
+      cmd += ` --label ${escapeForShell(allLabels.join(','))}`;
     }
 
     if (params.assignee) {
       // Handle @me specially
       const assignee = params.assignee === '@me' ? '@me' : params.assignee;
-      cmd += ` --assignee "${assignee}"`;
+      cmd += ` --assignee ${escapeForShell(assignee)}`;
     }
 
     // Create the issue - gh issue create returns the URL, not JSON
@@ -395,11 +395,11 @@ export class TaskManager {
     }
 
     if (labelFilters.length > 0) {
-      cmd += ` --label "${labelFilters.join(',')}"`;
+      cmd += ` --label ${escapeForShell(labelFilters.join(','))}`;
     }
 
     if (filter?.assignee) {
-      cmd += ` --assignee "${filter.assignee}"`;
+      cmd += ` --assignee ${escapeForShell(filter.assignee)}`;
     }
 
     const issues = await this.execGh<GitHubIssue[]>(cmd);
@@ -691,7 +691,7 @@ export class TaskManager {
   ): Promise<ProjectTask | null> {
     const repo = await this.resolveRepo(projectName);
     if (reason) {
-      await this.execGhRaw(`issue comment ${taskId} --repo "${repo}" --body "Blocked: ${reason}"`);
+      await this.execGhRaw(`issue comment ${taskId} --repo "${repo}" --body ${escapeForShell(`Blocked: ${reason}`)}`);
     }
     return this.updateTaskStatus(repo, taskId, 'blocked');
   }
@@ -858,10 +858,10 @@ export class TaskManager {
    */
   async searchTasks(query: string, projectName?: string): Promise<ProjectTask[]> {
     try {
-      let cmd = `issue list --search "${query}" --state all --json number,title,body,state,labels,assignees,createdAt,updatedAt,closedAt,url --limit 50`;
+      let cmd = `issue list --search ${escapeForShell(query)} --state all --json number,title,body,state,labels,assignees,createdAt,updatedAt,closedAt,url --limit 50`;
 
       if (projectName) {
-        cmd += ` --repo "${projectName}"`;
+        cmd += ` --repo ${escapeForShell(projectName)}`;
       }
 
       const issues = await this.execGh<GitHubIssue[]>(cmd);
