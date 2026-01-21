@@ -4,6 +4,9 @@
  */
 
 import type { BusinessRule } from '../types/index.js';
+import {
+  createRateLimitRule
+} from './shared-patterns.js';
 
 export const azureRules: BusinessRule[] = [
   {
@@ -61,25 +64,22 @@ export const azureRules: BusinessRule[] = [
     riskWeight: 45,
     tags: ['azure', 'security', 'managed-identity', 'authentication']
   },
-  {
+  // Azure OpenAI Rate Limiting - uses shared rate limit pattern
+  createRateLimitRule({
     id: 'azure-004',
     name: 'Validate Azure OpenAI Rate Limits',
     description: 'Azure OpenAI calls should respect rate limit headers',
-    type: 'operational',
-    enabled: true,
+    limitType: 'api',
+    scope: {
+      category: 'external_api',
+      provider: 'azure-openai'
+    },
+    actionType: 'warn',
+    message: 'Implement exponential backoff and respect Azure OpenAI rate limit headers',
     priority: 820,
-    conditions: [
-      { field: 'actionCategory', operator: 'equals', value: 'external_api' },
-      { field: 'provider', operator: 'equals', value: 'azure-openai' },
-      { field: 'respectsRateLimits', operator: 'not_equals', value: true }
-    ],
-    conditionLogic: 'all',
-    actions: [
-      { type: 'warn', message: 'Implement exponential backoff and respect Azure OpenAI rate limit headers' }
-    ],
     riskWeight: 30,
-    tags: ['azure', 'openai', 'rate-limiting', 'api']
-  },
+    tags: ['azure', 'openai', 'api']
+  }),
   {
     id: 'azure-005',
     name: 'Require Application Insights',

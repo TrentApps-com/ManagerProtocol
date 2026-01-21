@@ -4,6 +4,11 @@
  */
 
 import type { BusinessRule } from '../types/index.js';
+import {
+  createEncryptionRule,
+  createValidationRule,
+  createRateLimitRule
+} from './shared-patterns.js';
 
 export const websocketRules: BusinessRule[] = [
   {
@@ -25,24 +30,21 @@ export const websocketRules: BusinessRule[] = [
     riskWeight: 60,
     tags: ['websocket', 'socket.io', 'security', 'authentication']
   },
-  {
+  // Message Rate Limiting - uses shared rate limit pattern
+  createRateLimitRule({
     id: 'ws-002',
     name: 'Enforce Message Rate Limiting',
     description: 'WebSocket messages must be rate limited per connection',
-    type: 'security',
-    enabled: true,
+    limitType: 'message',
+    scope: {
+      protocol: ['websocket', 'socket.io']
+    },
+    actionType: 'warn',
+    message: 'Implement message rate limiting to prevent flood attacks (e.g., 100 msg/min)',
     priority: 920,
-    conditions: [
-      { field: 'protocol', operator: 'in', value: ['websocket', 'socket.io'] },
-      { field: 'messageRateLimitEnabled', operator: 'not_equals', value: true }
-    ],
-    conditionLogic: 'all',
-    actions: [
-      { type: 'warn', message: 'Implement message rate limiting to prevent flood attacks (e.g., 100 msg/min)' }
-    ],
     riskWeight: 40,
-    tags: ['websocket', 'rate-limiting', 'dos', 'security']
-  },
+    tags: ['websocket', 'dos']
+  }),
   {
     id: 'ws-003',
     name: 'Validate Binary Message Size',
@@ -98,41 +100,35 @@ export const websocketRules: BusinessRule[] = [
     riskWeight: 30,
     tags: ['websocket', 'limits', 'abuse-prevention']
   },
-  {
+  // Message Schema Validation - uses shared validation pattern
+  createValidationRule({
     id: 'ws-006',
     name: 'Validate Message Schema',
     description: 'WebSocket messages should be validated against schema',
-    type: 'security',
-    enabled: true,
+    validationType: 'message',
+    scope: {
+      protocol: ['websocket', 'socket.io']
+    },
+    actionType: 'warn',
+    message: 'Validate WebSocket message structure/schema to prevent injection attacks',
     priority: 860,
-    conditions: [
-      { field: 'protocol', operator: 'in', value: ['websocket', 'socket.io'] },
-      { field: 'messageValidation', operator: 'not_equals', value: true }
-    ],
-    conditionLogic: 'all',
-    actions: [
-      { type: 'warn', message: 'Validate WebSocket message structure/schema to prevent injection attacks' }
-    ],
     riskWeight: 35,
-    tags: ['websocket', 'validation', 'security']
-  },
-  {
+    tags: ['websocket']
+  }),
+  // WebSocket TLS Requirement - uses shared encryption pattern
+  createEncryptionRule({
     id: 'ws-007',
     name: 'WebSocket TLS Requirement',
     description: 'Production WebSocket connections must use TLS (wss://)',
-    type: 'security',
-    enabled: true,
+    encryptionType: 'tls',
+    scope: {
+      protocol: ['websocket', 'socket.io'],
+      environment: 'production'
+    },
+    actionType: 'deny',
+    message: 'Production WebSocket connections must use wss:// (TLS encrypted)',
     priority: 950,
-    conditions: [
-      { field: 'protocol', operator: 'in', value: ['websocket', 'socket.io'] },
-      { field: 'environment', operator: 'equals', value: 'production' },
-      { field: 'tlsEnabled', operator: 'not_equals', value: true }
-    ],
-    conditionLogic: 'all',
-    actions: [
-      { type: 'deny', message: 'Production WebSocket connections must use wss:// (TLS encrypted)' }
-    ],
     riskWeight: 55,
-    tags: ['websocket', 'tls', 'encryption', 'security']
-  }
+    tags: ['websocket', 'tls']
+  })
 ];

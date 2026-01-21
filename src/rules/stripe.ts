@@ -4,27 +4,25 @@
  */
 
 import type { BusinessRule } from '../types/index.js';
+import { createAuditLoggingRule, createValidationRule } from './shared-patterns.js';
 
 export const stripeRules: BusinessRule[] = [
-  {
+  // Webhook Signature Validation - uses shared validation pattern
+  createValidationRule({
     id: 'stripe-001',
     name: 'Require Webhook Signature Validation',
     description: 'Stripe webhooks must validate signatures to prevent replay attacks',
-    type: 'security',
-    enabled: true,
+    validationType: 'signature',
+    scope: {
+      actionName: 'webhook',
+      provider: 'stripe'
+    },
+    actionType: 'deny',
+    message: 'Stripe webhook signature validation is required (use stripe.webhooks.constructEvent)',
     priority: 980,
-    conditions: [
-      { field: 'actionName', operator: 'contains', value: 'webhook' },
-      { field: 'provider', operator: 'equals', value: 'stripe' },
-      { field: 'signatureValidated', operator: 'not_equals', value: true }
-    ],
-    conditionLogic: 'all',
-    actions: [
-      { type: 'deny', message: 'Stripe webhook signature validation is required (use stripe.webhooks.constructEvent)' }
-    ],
     riskWeight: 65,
-    tags: ['stripe', 'security', 'webhook', 'validation']
-  },
+    tags: ['stripe', 'webhook']
+  }),
   {
     id: 'stripe-002',
     name: 'Enforce Idempotency Keys',
@@ -103,24 +101,19 @@ export const stripeRules: BusinessRule[] = [
     riskWeight: 55,
     tags: ['stripe', 'sca', 'psd2', 'compliance', 'eu']
   },
-  {
+  // Payment Event Logging - uses shared audit pattern
+  createAuditLoggingRule({
     id: 'stripe-006',
     name: 'Log All Payment Events',
     description: 'All payment events must be logged for audit',
-    type: 'compliance',
-    enabled: true,
-    priority: 940,
-    conditions: [
-      { field: 'actionCategory', operator: 'equals', value: 'financial' },
+    categories: ['financial'],
+    additionalConditions: [
       { field: 'provider', operator: 'equals', value: 'stripe' }
     ],
-    conditionLogic: 'all',
-    actions: [
-      { type: 'log' }
-    ],
+    priority: 940,
     riskWeight: 10,
-    tags: ['stripe', 'audit', 'logging', 'compliance']
-  },
+    tags: ['stripe', 'compliance']
+  }),
   {
     id: 'stripe-007',
     name: 'Use Latest API Version',

@@ -5,6 +5,12 @@
  */
 
 import type { BusinessRule } from '../types/index.js';
+import {
+  createAuditLoggingRule,
+  createDataTypeAuditRule,
+  createEncryptionRule,
+  AUDIT_CATEGORIES
+} from './shared-patterns.js';
 
 export const complianceRules: BusinessRule[] = [
   // ============================================================================
@@ -91,24 +97,15 @@ export const complianceRules: BusinessRule[] = [
   // ============================================================================
   // HIPAA COMPLIANCE RULES
   // ============================================================================
-  {
+  // PHI Access Logging - uses shared audit pattern
+  createDataTypeAuditRule({
     id: 'hipaa-001',
     name: 'HIPAA - PHI Access Logging',
-    description: 'Ensures all PHI access is logged',
-    type: 'compliance',
-    enabled: true,
+    dataType: 'phi',
+    framework: 'hipaa',
     priority: 950,
-    conditions: [
-      { field: 'dataType', operator: 'equals', value: 'phi' }
-    ],
-    conditionLogic: 'all',
-    actions: [
-      { type: 'log' },
-      { type: 'allow' }
-    ],
-    riskWeight: 10,
-    tags: ['hipaa', 'phi', 'audit']
-  },
+    riskWeight: 10
+  }),
   {
     id: 'hipaa-002',
     name: 'HIPAA - Minimum Necessary Standard',
@@ -128,25 +125,22 @@ export const complianceRules: BusinessRule[] = [
     riskWeight: 35,
     tags: ['hipaa', 'minimum-necessary']
   },
-  {
+  // PHI Encryption - uses shared encryption pattern
+  createEncryptionRule({
     id: 'hipaa-003',
     name: 'HIPAA - PHI Encryption Requirement',
     description: 'Requires encryption for PHI in transit and at rest',
-    type: 'compliance',
-    enabled: true,
+    encryptionType: 'data',
+    scope: {
+      category: 'data_access,data_modification,external_api',
+      dataType: 'phi'
+    },
+    actionType: 'deny',
+    message: 'HIPAA: PHI must be encrypted in transit and at rest',
     priority: 960,
-    conditions: [
-      { field: 'dataType', operator: 'equals', value: 'phi' },
-      { field: 'actionCategory', operator: 'in', value: ['data_access', 'data_modification', 'external_api'] },
-      { field: 'encryptionEnabled', operator: 'not_equals', value: true }
-    ],
-    conditionLogic: 'all',
-    actions: [
-      { type: 'deny', message: 'HIPAA: PHI must be encrypted in transit and at rest' }
-    ],
     riskWeight: 55,
-    tags: ['hipaa', 'encryption']
-  },
+    tags: ['hipaa']
+  }),
 
   // ============================================================================
   // PCI-DSS COMPLIANCE RULES
@@ -253,23 +247,16 @@ export const complianceRules: BusinessRule[] = [
   // ============================================================================
   // GENERAL COMPLIANCE RULES
   // ============================================================================
-  {
+  // Audit Trail - uses shared audit pattern with standard categories
+  createAuditLoggingRule({
     id: 'comp-001',
     name: 'Audit Trail Requirement',
     description: 'Ensures all significant actions are logged',
-    type: 'compliance',
-    enabled: true,
+    categories: AUDIT_CATEGORIES,
     priority: 800,
-    conditions: [
-      { field: 'actionCategory', operator: 'in', value: ['data_modification', 'authorization', 'financial', 'pii_access'] }
-    ],
-    conditionLogic: 'all',
-    actions: [
-      { type: 'log' }
-    ],
     riskWeight: 5,
-    tags: ['audit', 'logging']
-  },
+    tags: []
+  }),
   {
     id: 'comp-002',
     name: 'Data Classification Requirement',

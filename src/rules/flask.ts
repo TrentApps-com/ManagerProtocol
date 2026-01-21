@@ -4,6 +4,10 @@
  */
 
 import type { BusinessRule } from '../types/index.js';
+import {
+  createValidationRule,
+  createProductionHttpsRule
+} from './shared-patterns.js';
 
 export const flaskRules: BusinessRule[] = [
   {
@@ -61,25 +65,22 @@ export const flaskRules: BusinessRule[] = [
     riskWeight: 35,
     tags: ['flask', 'security', 'dos', 'limits']
   },
-  {
+  // File Upload Validation - uses shared validation pattern
+  createValidationRule({
     id: 'flask-004',
     name: 'Require File Upload Validation',
     description: 'File uploads must validate type, size, and content',
-    type: 'security',
-    enabled: true,
+    validationType: 'file',
+    scope: {
+      category: 'file_system',
+      operation: 'upload'
+    },
+    actionType: 'deny',
+    message: 'File uploads require validation: type whitelist, size limit, content scan',
     priority: 920,
-    conditions: [
-      { field: 'actionCategory', operator: 'equals', value: 'file_system' },
-      { field: 'operation', operator: 'equals', value: 'upload' },
-      { field: 'fileValidation', operator: 'not_equals', value: true }
-    ],
-    conditionLogic: 'all',
-    actions: [
-      { type: 'deny', message: 'File uploads require validation: type whitelist, size limit, content scan' }
-    ],
     riskWeight: 50,
-    tags: ['flask', 'security', 'file-upload', 'validation']
-  },
+    tags: ['flask', 'file-upload']
+  }),
   {
     id: 'flask-005',
     name: 'Validate Flask Secret Key Strength',
@@ -116,25 +117,14 @@ export const flaskRules: BusinessRule[] = [
     riskWeight: 65,
     tags: ['flask', 'security', 'jinja2', 'template-injection', 'xss']
   },
-  {
+  // HTTPS in Production - uses shared production HTTPS pattern
+  createProductionHttpsRule({
     id: 'flask-007',
-    name: 'Require HTTPS in Production',
-    description: 'Flask production apps must enforce HTTPS',
-    type: 'security',
-    enabled: true,
+    framework: 'flask',
+    actionType: 'warn',
     priority: 940,
-    conditions: [
-      { field: 'environment', operator: 'equals', value: 'production' },
-      { field: 'framework', operator: 'equals', value: 'flask' },
-      { field: 'httpsEnforced', operator: 'not_equals', value: true }
-    ],
-    conditionLogic: 'all',
-    actions: [
-      { type: 'warn', message: 'Flask production apps should enforce HTTPS (use Flask-Talisman)' }
-    ],
-    riskWeight: 45,
-    tags: ['flask', 'security', 'https', 'encryption']
-  },
+    riskWeight: 45
+  }),
   {
     id: 'flask-008',
     name: 'Session Cookie Security',

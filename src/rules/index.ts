@@ -275,6 +275,87 @@ export function getFrontendRules(): BusinessRule[] {
   )];
 }
 
+// ============================================================================
+// STORAGE-SPECIFIC HELPERS (Task #35)
+// ============================================================================
+
+/**
+ * Get all storage-related rules
+ */
+export function getStorageRules(): BusinessRule[] {
+  return storageRules;
+}
+
+/**
+ * Get storage rules by storage type
+ */
+export function getStorageRulesByType(
+  storageType: 'browser' | 'database' | 'filesystem' | 'cache' | 'blob'
+): BusinessRule[] {
+  const typeTagMap: Record<string, string[]> = {
+    'browser': ['localStorage', 'sessionStorage', 'indexeddb', 'browser'],
+    'database': ['database', 'sql-injection', 'transactions'],
+    'filesystem': ['filesystem', 'system-files', 'path-traversal'],
+    'cache': ['cache', 'redis', 'memcached', 'cdn'],
+    'blob': ['blob', 's3', 'azure-blob', 'gcs']
+  };
+
+  const tags = typeTagMap[storageType] || [];
+  return storageRules.filter(rule =>
+    rule.tags?.some(tag => tags.includes(tag))
+  );
+}
+
+/**
+ * Get database-specific rules
+ */
+export function getDatabaseRules(): BusinessRule[] {
+  return storageRules.filter(rule =>
+    rule.id.startsWith('storage-db-') ||
+    rule.tags?.some(tag => ['database', 'sql', 'postgresql', 'mysql', 'mongodb', 'cosmos-db'].includes(tag))
+  );
+}
+
+/**
+ * Get file system rules
+ */
+export function getFileSystemRules(): BusinessRule[] {
+  return storageRules.filter(rule =>
+    rule.id.startsWith('storage-fs-') ||
+    rule.tags?.some(tag => ['filesystem', 'file-system'].includes(tag))
+  );
+}
+
+/**
+ * Get cache rules (Redis, Memcached, CDN)
+ */
+export function getCacheRules(): BusinessRule[] {
+  return storageRules.filter(rule =>
+    rule.id.startsWith('storage-cache-') ||
+    rule.tags?.some(tag => ['cache', 'redis', 'memcached', 'cdn'].includes(tag))
+  );
+}
+
+/**
+ * Get blob/object storage rules (S3, Azure Blob, GCS)
+ */
+export function getBlobStorageRules(): BusinessRule[] {
+  return storageRules.filter(rule =>
+    rule.id.startsWith('storage-blob-') ||
+    rule.tags?.some(tag => ['blob', 's3', 'azure-blob', 'gcs'].includes(tag))
+  );
+}
+
+/**
+ * Get browser storage rules (localStorage, sessionStorage, IndexedDB)
+ */
+export function getBrowserStorageRules(): BusinessRule[] {
+  return storageRules.filter(rule =>
+    (rule.id.startsWith('storage-00') && !rule.id.startsWith('storage-db-')) ||
+    rule.tags?.some(tag => ['localStorage', 'sessionStorage', 'indexeddb', 'browser'].includes(tag))
+  );
+}
+
 /**
  * Project Profiles - Technology-specific rule collections
  * Use these to filter rules by project tech stack
@@ -430,6 +511,23 @@ export const projectProfiles = {
       )
     ],
     description: 'RESTful API services with authentication and rate limiting'
+  },
+
+  /**
+   * Storage - Database, file system, cache, and blob storage (Task #35)
+   */
+  storage: {
+    name: 'Storage Systems',
+    rules: [
+      ...storageRules,
+      ...securityRules.filter(r =>
+        r.tags?.some(t => ['encryption', 'authentication', 'sql-injection'].includes(t))
+      ),
+      ...operationalRules.filter(r =>
+        r.tags?.some(t => ['backup', 'cost', 'limits'].includes(t))
+      )
+    ],
+    description: 'Database, file system, cache (Redis/Memcached), and blob storage (S3/Azure/GCS)'
   }
 };
 

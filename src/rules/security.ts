@@ -5,6 +5,7 @@
  */
 
 import type { BusinessRule } from '../types/index.js';
+import { createEncryptionRule } from './shared-patterns.js';
 
 export const securityRules: BusinessRule[] = [
   // ============================================================================
@@ -27,7 +28,9 @@ export const securityRules: BusinessRule[] = [
       { type: 'log' }
     ],
     riskWeight: 45,
-    tags: ['pii', 'gdpr', 'privacy']
+    tags: ['pii', 'gdpr', 'privacy'],
+    // Task #37: Rule interdependencies
+    relatedRules: ['sec-002', 'sec-003'] // Related to data export and logging rules
   },
   {
     id: 'sec-002',
@@ -45,7 +48,10 @@ export const securityRules: BusinessRule[] = [
       { type: 'require_approval', message: 'Bulk data export (>1000 records) requires human approval' }
     ],
     riskWeight: 35,
-    tags: ['data-export', 'bulk-operations']
+    tags: ['data-export', 'bulk-operations'],
+    // Task #37: Rule interdependencies
+    dependsOn: ['sec-001'], // Check PII access authorization first
+    relatedRules: ['sec-003'] // Related to logging sensitive data
   },
   {
     id: 'sec-003',
@@ -64,7 +70,10 @@ export const securityRules: BusinessRule[] = [
       { type: 'warn', message: 'Sensitive data should not be logged - ensure data masking is enabled' }
     ],
     riskWeight: 25,
-    tags: ['logging', 'data-masking']
+    tags: ['logging', 'data-masking'],
+    // Task #37: Rule interdependencies
+    dependsOn: ['sec-001'], // PII access check should happen first
+    relatedRules: ['sec-002'] // Related to bulk export
   },
 
   // ============================================================================
@@ -86,7 +95,9 @@ export const securityRules: BusinessRule[] = [
       { type: 'deny', message: 'External API calls require authentication token' }
     ],
     riskWeight: 50,
-    tags: ['authentication', 'api']
+    tags: ['authentication', 'api'],
+    // Task #37: Rule interdependencies
+    relatedRules: ['sec-011', 'sec-012', 'sec-031'] // Related auth and API rules
   },
   {
     id: 'sec-011',
@@ -106,7 +117,10 @@ export const securityRules: BusinessRule[] = [
       { type: 'notify', message: 'Security alert: Privilege escalation attempt detected' }
     ],
     riskWeight: 60,
-    tags: ['privilege-escalation', 'authorization']
+    tags: ['privilege-escalation', 'authorization'],
+    // Task #37: Rule interdependencies
+    dependsOn: ['sec-010'], // Check authentication before authorization
+    relatedRules: ['sec-012'] // Related session security
   },
   {
     id: 'sec-012',
@@ -124,7 +138,10 @@ export const securityRules: BusinessRule[] = [
       { type: 'notify', message: 'Security alert: Possible session hijacking detected' }
     ],
     riskWeight: 55,
-    tags: ['session-security', 'anomaly-detection']
+    tags: ['session-security', 'anomaly-detection'],
+    // Task #37: Rule interdependencies
+    dependsOn: ['sec-010'], // Check authentication first
+    relatedRules: ['sec-011'] // Related to privilege escalation
   },
 
   // ============================================================================
@@ -189,24 +206,21 @@ export const securityRules: BusinessRule[] = [
     riskWeight: 35,
     tags: ['network', 'whitelist']
   },
-  {
+  // HTTPS for External APIs - uses shared encryption pattern
+  createEncryptionRule({
     id: 'sec-031',
     name: 'Enforce HTTPS for External APIs',
     description: 'Requires HTTPS for all external API communications',
-    type: 'security',
-    enabled: true,
+    encryptionType: 'transport',
+    scope: {
+      category: 'external_api'
+    },
+    actionType: 'deny',
+    message: 'External API calls must use HTTPS',
     priority: 930,
-    conditions: [
-      { field: 'actionCategory', operator: 'equals', value: 'external_api' },
-      { field: 'protocol', operator: 'not_equals', value: 'https' }
-    ],
-    conditionLogic: 'all',
-    actions: [
-      { type: 'deny', message: 'External API calls must use HTTPS' }
-    ],
     riskWeight: 40,
-    tags: ['https', 'encryption', 'api']
-  },
+    tags: ['https', 'api']
+  }),
 
   // ============================================================================
   // FILE SYSTEM SECURITY RULES

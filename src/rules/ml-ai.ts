@@ -4,6 +4,7 @@
  */
 
 import type { BusinessRule } from '../types/index.js';
+import { createValidationRule } from './shared-patterns.js';
 
 export const mlAiRules: BusinessRule[] = [
   {
@@ -60,24 +61,21 @@ export const mlAiRules: BusinessRule[] = [
     riskWeight: 30,
     tags: ['ml', 'ai', 'inference', 'batch', 'gpu']
   },
-  {
+  // Model Input Validation - uses shared validation pattern
+  createValidationRule({
     id: 'ml-004',
     name: 'Validate Model Inputs',
     description: 'Model inputs must be validated to prevent prompt injection',
-    type: 'security',
-    enabled: true,
+    validationType: 'input',
+    scope: {
+      actionName: 'inference'
+    },
+    actionType: 'warn',
+    message: 'ML: Validate model inputs (length limits, content filtering, injection prevention)',
     priority: 940,
-    conditions: [
-      { field: 'actionName', operator: 'contains', value: 'inference' },
-      { field: 'inputValidation', operator: 'not_equals', value: true }
-    ],
-    conditionLogic: 'all',
-    actions: [
-      { type: 'warn', message: 'ML: Validate model inputs (length limits, content filtering, injection prevention)' }
-    ],
     riskWeight: 40,
-    tags: ['ml', 'ai', 'security', 'validation', 'prompt-injection']
-  },
+    tags: ['ml', 'ai', 'prompt-injection']
+  }),
   {
     id: 'ml-005',
     name: 'Require Content Safety Filtering',
