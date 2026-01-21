@@ -669,3 +669,104 @@ export function getMigrationSuggestions(ruleIds: string[]): Array<{
 
   return suggestions;
 }
+
+// ============================================================================
+// Task #31, #33, #34: RULE PATTERNS, FIELD STANDARDS, CONDITION OPTIMIZATION
+// ============================================================================
+
+// Re-export pattern builders (Task #31)
+export {
+  createAuthenticationRule,
+  createDataAccessRule,
+  createBulkDataAccessRule,
+  createRateLimitRule,
+  createComplianceRule,
+  createEnvironmentRule,
+  createSecurityRule,
+  createOperationalRule,
+  createDenyRule,
+  createApprovalRule,
+  createWarningRule,
+  createAuditRule,
+  createComplianceRuleSet,
+  createSecurityRuleSet,
+  COMPLIANCE_FRAMEWORKS,
+  INJECTION_PATTERNS,
+  type AuthenticationRuleOptions,
+  type DataAccessRuleOptions,
+  type RateLimitRuleOptions,
+  type ComplianceRuleOptions,
+  type EnvironmentRuleOptions,
+  type SecurityRuleOptions,
+  type OperationalRuleOptions,
+  type ComplianceFramework,
+  type BaseRuleOptions
+} from './patterns.js';
+
+// Re-export field standards (Task #33)
+export {
+  ActionFields,
+  EnvironmentFields,
+  UserFields,
+  DataFields,
+  OperationFields,
+  SecurityFields,
+  ComplianceFields,
+  OperationalFields,
+  TestingFields,
+  ApiFields,
+  UxFields,
+  WebSocketFields,
+  MlAiFields,
+  FrameworkFields,
+  Fields,
+  LegacyFieldMappings,
+  validateFieldName,
+  validateRuleConditions,
+  getLegacyFieldWarnings,
+  toStandardFieldPath,
+  type StandardFieldPath,
+  type FieldCategory,
+  type FieldValidationResult
+} from './field-standards.js';
+
+// Re-export condition optimizer (Task #34)
+export {
+  optimizeConditions,
+  optimizeRule,
+  optimizeRules,
+  combineEqualsToIn,
+  reorderForShortCircuit,
+  removeRedundant,
+  simplifyConditions,
+  analyzeRulesForOptimization,
+  DEFAULT_FIELD_COSTS,
+  type OptimizationResult,
+  type OptimizationChange,
+  type FieldCost
+} from './condition-optimizer.js';
+
+// Re-export shared patterns (avoid duplicates with patterns.js)
+export {
+  createAuditLoggingRule,
+  createDataTypeAuditRule,
+  createEncryptionRule,
+  createValidationRule,
+  createProductionRule,
+  createDebugModeRule,
+  createProductionHttpsRule,
+  createProductionMonitoringRule,
+  AUDIT_CATEGORIES,
+  AUDIT_LOG_ACTION,
+  ENCRYPTION_CONDITION,
+  HTTPS_PROTOCOL_CONDITION,
+  TLS_CONDITION,
+  VALIDATION_REQUIRED_CONDITION,
+  FILE_VALIDATION_CONDITION,
+  MESSAGE_VALIDATION_CONDITION,
+  SIGNATURE_VALIDATION_CONDITION,
+  RATE_LIMIT_ENABLED_CONDITION,
+  MESSAGE_RATE_LIMIT_CONDITION,
+  PRODUCTION_ENV_CONDITION,
+  sharedPatterns
+} from './shared-patterns.js';
