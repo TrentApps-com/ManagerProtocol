@@ -10,6 +10,7 @@ import { promisify } from 'util';
 import { writeFileSync, unlinkSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
+import { randomBytes } from 'crypto';
 
 const execAsync = promisify(exec);
 
@@ -49,6 +50,16 @@ export class GitHubApprovalManager {
     this.approvedLabel = options.approvedLabelName || 'approved';
     this.deniedLabel = options.deniedLabelName || 'denied';
     this.expirationHours = options.expirationHours || 24;
+  }
+
+  /**
+   * Create a secure temporary file with unpredictable name and restricted permissions
+   */
+  private createSecureTempFile(prefix: string, content: string): string {
+    const randomSuffix = randomBytes(16).toString('hex');
+    const tempFile = join(tmpdir(), `${prefix}-${randomSuffix}.md`);
+    writeFileSync(tempFile, content, { encoding: 'utf-8', mode: 0o600 });
+    return tempFile;
   }
 
   /**
@@ -92,8 +103,7 @@ export class GitHubApprovalManager {
     const labelArgs = labels.map(l => `--label "${l}"`).join(' ');
 
     // Write body to temp file to avoid shell escaping issues
-    const tempFile = join(tmpdir(), `gh-issue-${Date.now()}.md`);
-    writeFileSync(tempFile, body, 'utf-8');
+    const tempFile = this.createSecureTempFile('gh-issue', body);
 
     try {
       const cmd = `gh issue create --repo "${repo}" --title "${title}" ${labelArgs} --body-file "${tempFile}"`;
@@ -162,8 +172,7 @@ export class GitHubApprovalManager {
     });
 
     // Write comment to temp file
-    const tempFile = join(tmpdir(), `gh-comment-${Date.now()}.md`);
-    writeFileSync(tempFile, comment, 'utf-8');
+    const tempFile = this.createSecureTempFile('gh-comment', comment);
 
     try {
       await execAsync(`gh issue comment ${params.issueNumber} --repo "${repo}" --body-file "${tempFile}"`);
@@ -247,8 +256,7 @@ export class GitHubApprovalManager {
 
     // Add approval comment
     const comment = `✅ **Approved** by ${params.approverId}\n\n${params.comments || 'No comments provided.'}`;
-    const tempFile = join(tmpdir(), `gh-approve-${Date.now()}.md`);
-    writeFileSync(tempFile, comment, 'utf-8');
+    const tempFile = this.createSecureTempFile('gh-approve', comment);
 
     try {
       await execAsync(`gh issue comment ${params.issueNumber} --repo "${repo}" --body-file "${tempFile}"`);
@@ -274,8 +282,7 @@ export class GitHubApprovalManager {
 
     // Add denial comment
     const comment = `❌ **Denied** by ${params.denierId}\n\n${params.reason || 'No reason provided.'}`;
-    const tempFile = join(tmpdir(), `gh-deny-${Date.now()}.md`);
-    writeFileSync(tempFile, comment, 'utf-8');
+    const tempFile = this.createSecureTempFile('gh-deny', comment);
 
     try {
       await execAsync(`gh issue comment ${params.issueNumber} --repo "${repo}" --body-file "${tempFile}"`);
