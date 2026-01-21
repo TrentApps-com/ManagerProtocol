@@ -138,7 +138,7 @@ MCP TOOLS:
     - analyze_css            Analyze CSS for issues
     - get_design_tokens      Get available design tokens
 
-For more information, visit: https://github.com/ManagerProtocol/agent-supervisor
+For more information, visit: https://github.com/TrentApps-com/ManagerProtocol
 `);
 }
 

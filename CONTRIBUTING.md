@@ -13,8 +13,8 @@ Thank you for your interest in contributing to Enterprise Agent Supervisor! This
 
 1. Clone the repository:
    ```bash
-   git clone https://github.com/ManagerProtocol/agent-supervisor.git
-   cd agent-supervisor
+   git clone https://github.com/TrentApps-com/ManagerProtocol.git
+   cd ManagerProtocol
    ```
 
 2. Install dependencies:
