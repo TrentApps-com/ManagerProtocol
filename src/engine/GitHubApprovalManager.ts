@@ -63,6 +63,34 @@ export class GitHubApprovalManager {
   }
 
   /**
+   * Safely delete a temp file, ignoring errors if the file doesn't exist
+   */
+  private safeDeleteTempFile(tempFile: string): void {
+    try {
+      unlinkSync(tempFile);
+    } catch {
+      // Ignore errors - file may not exist or already be deleted
+    }
+  }
+
+  /**
+   * Execute a function with a temp file, ensuring cleanup happens in all code paths (Fix #83)
+   * This guarantees the temp file is deleted even if an exception occurs
+   */
+  private async withTempFile<T>(
+    prefix: string,
+    content: string,
+    fn: (tempFile: string) => Promise<T>
+  ): Promise<T> {
+    const tempFile = this.createSecureTempFile(prefix, content);
+    try {
+      return await fn(tempFile);
+    } finally {
+      this.safeDeleteTempFile(tempFile);
+    }
+  }
+
+  /**
    * Create a new approval request as a GitHub issue
    */
   async createApprovalIssue(params: {
@@ -102,19 +130,14 @@ export class GitHubApprovalManager {
     const title = `[APPROVAL REQUIRED] ${params.action}`;
     const labelArgs = labels.map(l => `--label "${l}"`).join(' ');
 
-    // Write body to temp file to avoid shell escaping issues
-    const tempFile = this.createSecureTempFile('gh-issue', body);
-
-    try {
+    // Write body to temp file to avoid shell escaping issues (Fix #83 - guaranteed cleanup)
+    return this.withTempFile('gh-issue', body, async (tempFile) => {
       const cmd = `gh issue create --repo "${repo}" --title "${title}" ${labelArgs} --body-file "${tempFile}"`;
       const { stdout } = await execAsync(cmd);
       const issueUrl = stdout.trim();
 
       return this.parseApprovalResponse(issueUrl, repo, params, expiresAt);
-    } finally {
-      // Clean up temp file
-      try { unlinkSync(tempFile); } catch {}
-    }
+    });
   }
 
   private parseApprovalResponse(issueUrl: string, repo: string, params: any, expiresAt: string): ApprovalRequest {
@@ -156,6 +179,9 @@ export class GitHubApprovalManager {
     const repo = params.repo || this.defaultRepo;
     if (!repo) throw new Error('Repository required');
 
+    // Validate issue number format
+    this.validateIssueNumber(params.issueNumber);
+
     // Add approval label
     await execAsync(`gh issue edit ${params.issueNumber} --repo "${repo}" --add-label "${this.approvalLabel}"`);
 
@@ -171,13 +197,18 @@ export class GitHubApprovalManager {
       expiresAt
     });
 
-    // Write comment to temp file
-    const tempFile = this.createSecureTempFile('gh-comment', comment);
-
-    try {
+    // Write comment to temp file (Fix #83 - guaranteed cleanup)
+    await this.withTempFile('gh-comment', comment, async (tempFile) => {
       await execAsync(`gh issue comment ${params.issueNumber} --repo "${repo}" --body-file "${tempFile}"`);
-    } finally {
-      try { unlinkSync(tempFile); } catch {}
+    });
+  }
+
+  /**
+   * Validate that an issue number is a positive integer
+   */
+  private validateIssueNumber(issueNumber: number): void {
+    if (!Number.isInteger(issueNumber) || issueNumber <= 0) {
+      throw new Error(`Invalid issue number: ${issueNumber}. Must be a positive integer.`);
     }
   }
 
@@ -191,7 +222,11 @@ export class GitHubApprovalManager {
     const repo = params.repo || this.defaultRepo;
     if (!repo) throw new Error('Repository required');
 
-    // Get issue details
+    // Validate issue number format (Fix #85)
+    this.validateIssueNumber(params.issueNumber);
+
+    // Get issue details - fetched atomically via single API call (Fix #86)
+    // The gh CLI returns a consistent snapshot of the issue state
     const { stdout } = await execAsync(
       `gh issue view ${params.issueNumber} --repo "${repo}" --json number,title,url,labels,state,createdAt,comments`
     );
@@ -211,17 +246,34 @@ export class GitHubApprovalManager {
       status = 'denied';
     }
 
-    // Check comments for /approve or /deny commands
+    // Check comments for /approve or /deny commands (Fix #86)
+    // Process ALL comments chronologically to find the MOST RECENT command
+    // This prevents race conditions where order matters
+    let lastCommandStatus: 'approved' | 'denied' | null = null;
+    let lastCommandTime: string | null = null;
+
     for (const comment of issue.comments) {
       const body = comment.body?.toLowerCase() || '';
+      const commentTime = comment.createdAt || '';
+
+      // Only update if this is a newer command than what we've seen
       if (body.includes('/approve')) {
-        status = 'approved';
-        break;
+        if (!lastCommandTime || commentTime > lastCommandTime) {
+          lastCommandStatus = 'approved';
+          lastCommandTime = commentTime;
+        }
       }
       if (body.includes('/deny')) {
-        status = 'denied';
-        break;
+        if (!lastCommandTime || commentTime > lastCommandTime) {
+          lastCommandStatus = 'denied';
+          lastCommandTime = commentTime;
+        }
       }
+    }
+
+    // Apply the most recent command status if found
+    if (lastCommandStatus) {
+      status = lastCommandStatus;
     }
 
     return {
@@ -249,20 +301,19 @@ export class GitHubApprovalManager {
     const repo = params.repo || this.defaultRepo;
     if (!repo) throw new Error('Repository required');
 
+    // Validate issue number format
+    this.validateIssueNumber(params.issueNumber);
+
     // Remove needs-approval label and add approved label
     await execAsync(
       `gh issue edit ${params.issueNumber} --repo "${repo}" --remove-label "${this.approvalLabel}" --add-label "${this.approvedLabel}"`
     );
 
-    // Add approval comment
+    // Add approval comment (Fix #83 - guaranteed cleanup)
     const comment = `✅ **Approved** by ${params.approverId}\n\n${params.comments || 'No comments provided.'}`;
-    const tempFile = this.createSecureTempFile('gh-approve', comment);
-
-    try {
+    await this.withTempFile('gh-approve', comment, async (tempFile) => {
       await execAsync(`gh issue comment ${params.issueNumber} --repo "${repo}" --body-file "${tempFile}"`);
-    } finally {
-      try { unlinkSync(tempFile); } catch {}
-    }
+    });
   }
 
   /**
@@ -277,18 +328,17 @@ export class GitHubApprovalManager {
     const repo = params.repo || this.defaultRepo;
     if (!repo) throw new Error('Repository required');
 
+    // Validate issue number format
+    this.validateIssueNumber(params.issueNumber);
+
     // Add denied label
     await execAsync(`gh issue edit ${params.issueNumber} --repo "${repo}" --add-label "${this.deniedLabel}"`);
 
-    // Add denial comment
+    // Add denial comment (Fix #83 - guaranteed cleanup)
     const comment = `❌ **Denied** by ${params.denierId}\n\n${params.reason || 'No reason provided.'}`;
-    const tempFile = this.createSecureTempFile('gh-deny', comment);
-
-    try {
+    await this.withTempFile('gh-deny', comment, async (tempFile) => {
       await execAsync(`gh issue comment ${params.issueNumber} --repo "${repo}" --body-file "${tempFile}"`);
-    } finally {
-      try { unlinkSync(tempFile); } catch {}
-    }
+    });
 
     // Close the issue
     await execAsync(`gh issue close ${params.issueNumber} --repo "${repo}" --reason "not planned"`);
