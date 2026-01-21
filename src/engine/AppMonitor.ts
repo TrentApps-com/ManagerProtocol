@@ -313,8 +313,9 @@ export class AppMonitor {
         // Consume response body to prevent memory leak
         res.resume();
 
-        // Clean up response listeners
-        res.on('end', () => {
+        // Use once() for response listeners - they should only fire once
+        // and this ensures proper cleanup to prevent memory leaks
+        res.once('end', () => {
           safeResolve({
             success,
             statusCode: res.statusCode,
@@ -323,13 +324,14 @@ export class AppMonitor {
           });
         });
 
-        res.on('error', () => {
+        res.once('error', () => {
           // Response error after connection established
           request.destroy();
         });
       });
 
-      request.on('error', (err) => {
+      // Use once() for request listeners - they should only fire once
+      request.once('error', (err) => {
         request.destroy();
         safeResolve({
           success: false,
@@ -338,7 +340,7 @@ export class AppMonitor {
         });
       });
 
-      request.on('timeout', () => {
+      request.once('timeout', () => {
         request.destroy();
         safeResolve({
           success: false,
