@@ -71,8 +71,10 @@ export class RateLimiter {
       const bucket = this.getOrCreateBucket(bucketKey, now, config.windowMs);
 
       // Check if within window
+      // Window is active: windowStart <= now < windowStart + windowMs
+      // Window expires when: now - windowStart >= windowMs
       if (now - bucket.windowStart >= config.windowMs) {
-        // Reset window
+        // Reset window: boundary is exclusive on upper bound
         bucket.count = 0;
         bucket.windowStart = now;
         bucket.burstCount = 0;
@@ -139,6 +141,7 @@ export class RateLimiter {
       const bucket = this.getOrCreateBucket(bucketKey, now, config.windowMs);
 
       // Reset if window expired
+      // Window boundary: when now - windowStart >= windowMs, the window has expired
       if (now - bucket.windowStart >= config.windowMs) {
         bucket.count = 0;
         bucket.windowStart = now;
@@ -176,6 +179,7 @@ export class RateLimiter {
     }
 
     // Check if window has expired
+    // Window expires when: now - windowStart >= windowMs
     if (now - bucket.windowStart >= config.windowMs) {
       return {
         key: bucketKey,
@@ -281,12 +285,14 @@ export class RateLimiter {
     }
 
     // Remove buckets that are older than the maximum window
-    // (bucket is expired if now - windowStart > maxWindowMs)
-    const expireThreshold = now - maxWindowMs * 2; // 2x window for safety margin
+    // This uses >= for consistency with window expiration checks
+    // A bucket is expired when: now - windowStart >= 2*maxWindowMs (2x safety margin)
     let removedCount = 0;
 
     for (const [key, bucket] of this.buckets.entries()) {
-      if (bucket.windowStart < expireThreshold) {
+      // Off-by-one fix: use consistent >= comparison for boundary calculation
+      // Window boundary semantics: now - windowStart >= threshold means expired
+      if (now - bucket.windowStart >= maxWindowMs * 2) {
         this.buckets.delete(key);
         removedCount++;
       }
