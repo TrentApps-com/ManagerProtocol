@@ -5,7 +5,7 @@
  */
 
 import { v4 as uuidv4 } from 'uuid';
-import { promises as fs } from 'fs';
+import { mkdirSync } from 'fs';
 import path from 'path';
 import Database from 'better-sqlite3';
 import type { AuditEvent, AuditEventType, RiskLevel } from '../types/index.js';
@@ -90,9 +90,9 @@ export class AuditLogger {
     if (!this.dbPath) return;
 
     try {
-      // Ensure directory exists
+      // Ensure directory exists with secure permissions (owner-only: 0o700)
       const dir = path.dirname(this.dbPath);
-      await fs.mkdir(dir, { recursive: true });
+      mkdirSync(dir, { recursive: true, mode: 0o700 });
 
       // Open database
       this.db = new Database(this.dbPath);

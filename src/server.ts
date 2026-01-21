@@ -36,7 +36,7 @@ const supervisor = new AgentSupervisor({
   },
   auditOptions: {
     enableConsoleLog: process.env.DEBUG === 'true',
-    dbPath: process.env.AUDIT_DB_PATH || '/tmp/agent-supervisor/audit.db'
+    dbPath: process.env.AUDIT_DB_PATH || './data/audit.db'
   }
 });
 
