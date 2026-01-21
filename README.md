@@ -78,9 +78,33 @@ AI agents are powerful, but without guardrails they can:
 npm install @trentapps/manager-protocol
 ```
 
-### MCP Configuration
+### Claude Code
 
-Add to your Claude Desktop or MCP client configuration:
+The fastest way to get started with Claude Code:
+
+**Option 1: Using the CLI (Recommended)**
+```bash
+claude mcp add agent-supervisor -- npx @trentapps/manager-protocol
+```
+
+**Option 2: Manual Configuration**
+
+Add to your MCP settings file (`~/.claude/settings.json` or `.mcp.json` in your project):
+
+```json
+{
+  "mcpServers": {
+    "agent-supervisor": {
+      "command": "npx",
+      "args": ["@trentapps/manager-protocol"]
+    }
+  }
+}
+```
+
+### Other MCP Clients
+
+For Claude Desktop or other MCP clients, add to your configuration file:
 
 ```json
 {
@@ -274,6 +298,73 @@ Evaluate CSS before adding it. Checks for duplicates, recommends externalization
 }
 ```
 
+### Task Management Tools
+
+The supervisor includes full GitHub-integrated task management:
+
+| Tool | Description |
+|------|-------------|
+| `create_task` | Create a new task (GitHub Issue) |
+| `get_tasks` | List tasks with filtering |
+| `get_pending_tasks` | Get tasks needing approval |
+| `get_approved_tasks` | Get tasks ready to work on |
+| `update_task` | Update task metadata |
+| `close_task_with_comment` | Close with resolution |
+| `add_task_comment` | Add comment to task |
+| `link_commits` | Link commits to tasks |
+
+### App Monitoring Tools
+
+Monitor production applications for health and uptime:
+
+| Tool | Description |
+|------|-------------|
+| `add_monitored_app` | Register app for monitoring |
+| `check_app_health` | Immediate health check |
+| `check_all_apps_health` | Health check all apps |
+| `get_app_status` | Get detailed app status |
+| `list_monitored_apps` | List all monitored apps |
+| `get_offline_apps` | List currently offline apps |
+
+### Session Management Tools
+
+Track agent sessions for audit and observability:
+
+| Tool | Description |
+|------|-------------|
+| `register_session` | Register a Claude session |
+| `complete_session` | Mark session complete |
+| `health_check` | Check supervisor health |
+
+### Rules Management Tools
+
+| Tool | Description |
+|------|-------------|
+| `list_rules` | List configured rules (use filters!) |
+| `add_rule` | Add custom rule |
+| `remove_rule` | Remove rule |
+| `load_preset` | Load rule preset |
+| `discover_relevant_rules` | Auto-detect project tech stack |
+| `list_project_profiles` | List available profiles |
+
+### Approval Workflow Tools
+
+| Tool | Description |
+|------|-------------|
+| `list_pending_approvals` | List pending approvals |
+| `approve_request` | Approve a request |
+| `deny_request` | Deny a request |
+| `check_approval_status` | Check approval status |
+
+### Audit Tools
+
+| Tool | Description |
+|------|-------------|
+| `get_audit_events` | Query audit log |
+| `get_audit_stats` | Get statistics |
+| `export_audit_log` | Export as JSON |
+| `get_approval_stats` | Approval workflow stats |
+
 ---
 
 ## Custom Rules
@@ -357,6 +448,24 @@ Built-in support for:
 
 ---
 
+## Configuration
+
+### Environment Variables
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `GITHUB_TOKEN` | GitHub personal access token for task management and approvals | Required for GitHub features |
+| `DASHBOARD_PORT` | HTTP dashboard port | `3100` |
+| `AUDIT_DB_PATH` | Path to SQLite audit database | `./data/audit.db` |
+| `NODE_ENV` | Environment (development/production) | `development` |
+| `DEBUG` | Enable debug logging | `false` |
+
+### Node.js Requirements
+
+- Node.js 18.0.0 or higher required
+
+---
+
 ## Security & Deployment
 
 ### Local Usage (Default)
@@ -388,21 +497,31 @@ If deploying in a production environment with network access:
 ## Architecture
 
 ```
-┌──────────────────────────────────────────────────────────────┐
-│                    Agent Supervisor                          │
-├──────────────────────────────────────────────────────────────┤
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────┐  │
-│  │   Rules     │  │    Rate     │  │      Approval       │  │
-│  │   Engine    │  │   Limiter   │  │      Manager        │  │
-│  └─────────────┘  └─────────────┘  └─────────────────────┘  │
-│  ┌─────────────────────────────────────────────────────────┐│
-│  │                    Audit Logger                         ││
-│  └─────────────────────────────────────────────────────────┘│
-├──────────────────────────────────────────────────────────────┤
-│                      MCP Server                              │
-│  evaluate_action | apply_business_rules | require_approval  │
-│  log_event | list_rules | add_rule | get_audit_events ...   │
-└──────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────┐
+│                      Agent Supervisor                             │
+├──────────────────────────────────────────────────────────────────┤
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────────┐   │
+│  │   Rules     │  │    Rate     │  │    GitHub Approval      │   │
+│  │   Engine    │  │   Limiter   │  │       Manager           │   │
+│  └─────────────┘  └─────────────┘  └─────────────────────────┘   │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────────┐   │
+│  │    Task     │  │     App     │  │      CSS                │   │
+│  │   Manager   │  │   Monitor   │  │     Analyzer            │   │
+│  └─────────────┘  └─────────────┘  └─────────────────────────┘   │
+│  ┌───────────────────────────────────────────────────────────┐   │
+│  │                     Audit Logger (SQLite)                  │   │
+│  └───────────────────────────────────────────────────────────┘   │
+├──────────────────────────────────────────────────────────────────┤
+│                        MCP Server (stdio)                         │
+│  evaluate_action | create_task | check_app_health | css_eval     │
+│  log_event | register_session | list_rules | require_approval    │
+└──────────────────────────────────────────────────────────────────┘
+          │                              │
+          ▼                              ▼
+┌─────────────────────┐      ┌─────────────────────┐
+│   GitHub Issues     │      │  HTTP Dashboard     │
+│   (Task Storage)    │      │  (localhost:3100)   │
+└─────────────────────┘      └─────────────────────┘
 ```
 
 ---
