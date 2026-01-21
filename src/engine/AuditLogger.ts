@@ -118,6 +118,9 @@ export class AuditLogger {
         CREATE INDEX IF NOT EXISTS idx_timestamp ON audit_events(timestamp);
         CREATE INDEX IF NOT EXISTS idx_eventType ON audit_events(eventType);
         CREATE INDEX IF NOT EXISTS idx_outcome ON audit_events(outcome);
+        CREATE INDEX IF NOT EXISTS idx_correlationId ON audit_events(correlationId);
+        CREATE INDEX IF NOT EXISTS idx_agentId ON audit_events(agentId);
+        CREATE INDEX IF NOT EXISTS idx_sessionId ON audit_events(sessionId);
       `);
 
       console.log('[AuditLogger] SQLite database initialized at', this.dbPath);
