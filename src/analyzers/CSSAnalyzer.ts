@@ -89,73 +89,113 @@ export class CSSAnalyzer {
    * Main analysis entry point
    */
   analyze(context: CSSAnalysisContext): CSSAnalysisResult {
-    const ruleId = this.generateRuleId(context.newRule);
-    const suggestions: CSSSuggestion[] = [];
-    const duplicates: CSSRule[] = [];
-    const removableCandidates: CSSRule[] = [];
-    let riskScore = 0;
+    try {
+      // Validate selector first
+      if (!this.isValidSelector(context.newRule.selector)) {
+        return {
+          ruleId: `css-invalid-${this.simpleHash(context.newRule.selector)}`,
+          newRule: context.newRule,
+          shouldExternalize: false,
+          shouldMakeGlobal: false,
+          duplicates: [],
+          suggestions: [{
+            type: 'specificity_warning',
+            severity: 'error',
+            message: 'Invalid CSS selector',
+            details: 'The selector appears to be malformed or contains invalid characters'
+          }],
+          removableCandidates: [],
+          riskScore: 50,
+          summary: 'Skipped analysis: invalid CSS selector'
+        };
+      }
 
-    // 1. Check for duplicates/similar rules
-    const duplicateCheck = this.findDuplicates(context.newRule, context.existingRules || []);
-    duplicates.push(...duplicateCheck.duplicates);
-    suggestions.push(...duplicateCheck.suggestions);
-    riskScore += duplicateCheck.duplicates.length * 10;
+      const ruleId = this.generateRuleId(context.newRule);
+      const suggestions: CSSSuggestion[] = [];
+      const duplicates: CSSRule[] = [];
+      const removableCandidates: CSSRule[] = [];
+      let riskScore = 0;
 
-    // 2. Check if should be externalized
-    const externalizeCheck = this.checkExternalization(context);
-    suggestions.push(...externalizeCheck.suggestions);
-    if (externalizeCheck.shouldExternalize) riskScore += 15;
+      // 1. Check for duplicates/similar rules
+      const duplicateCheck = this.findDuplicates(context.newRule, context.existingRules || []);
+      duplicates.push(...duplicateCheck.duplicates);
+      suggestions.push(...duplicateCheck.suggestions);
+      riskScore += duplicateCheck.duplicates.length * 10;
 
-    // 3. Check if should be global
-    const globalCheck = this.checkGlobalCandidate(context);
-    suggestions.push(...globalCheck.suggestions);
-    if (globalCheck.shouldMakeGlobal) riskScore += 10;
+      // 2. Check if should be externalized
+      const externalizeCheck = this.checkExternalization(context);
+      suggestions.push(...externalizeCheck.suggestions);
+      if (externalizeCheck.shouldExternalize) riskScore += 15;
 
-    // 4. Check for variable candidates
-    const variableCheck = this.checkVariableCandidates(context.newRule);
-    suggestions.push(...variableCheck.suggestions);
-    riskScore += variableCheck.suggestions.length * 5;
+      // 3. Check if should be global
+      const globalCheck = this.checkGlobalCandidate(context);
+      suggestions.push(...globalCheck.suggestions);
+      if (globalCheck.shouldMakeGlobal) riskScore += 10;
 
-    // 5. Check for utility class opportunities
-    if (context.hasStyleSystem) {
-      const utilityCheck = this.checkUtilityOpportunities(context);
-      suggestions.push(...utilityCheck.suggestions);
+      // 4. Check for variable candidates
+      const variableCheck = this.checkVariableCandidates(context.newRule);
+      suggestions.push(...variableCheck.suggestions);
+      riskScore += variableCheck.suggestions.length * 5;
+
+      // 5. Check for utility class opportunities
+      if (context.hasStyleSystem) {
+        const utilityCheck = this.checkUtilityOpportunities(context);
+        suggestions.push(...utilityCheck.suggestions);
+      }
+
+      // 6. Check specificity issues
+      const specificityCheck = this.checkSpecificity(context.newRule);
+      suggestions.push(...specificityCheck.suggestions);
+      riskScore += specificityCheck.riskContribution;
+
+      // 7. Check naming conventions
+      const namingCheck = this.checkNamingConvention(context.newRule, context.framework);
+      suggestions.push(...namingCheck.suggestions);
+
+      // 8. Find removable candidates
+      if (context.existingRules) {
+        removableCandidates.push(...this.findRemovableCandidates(context.newRule, context.existingRules));
+      }
+
+      // Generate summary
+      const summary = this.generateSummary(
+        context.newRule,
+        suggestions,
+        duplicates,
+        externalizeCheck.shouldExternalize,
+        globalCheck.shouldMakeGlobal
+      );
+
+      return {
+        ruleId,
+        newRule: context.newRule,
+        shouldExternalize: externalizeCheck.shouldExternalize,
+        shouldMakeGlobal: globalCheck.shouldMakeGlobal,
+        duplicates,
+        suggestions: this.prioritizeSuggestions(suggestions),
+        removableCandidates,
+        riskScore: Math.min(100, riskScore),
+        summary
+      };
+    } catch (error) {
+      // Gracefully handle unexpected errors during analysis
+      return {
+        ruleId: `css-error-${this.simpleHash(context.newRule.selector)}`,
+        newRule: context.newRule,
+        shouldExternalize: false,
+        shouldMakeGlobal: false,
+        duplicates: [],
+        suggestions: [{
+          type: 'specificity_warning',
+          severity: 'error',
+          message: 'CSS analysis error',
+          details: `Failed to analyze CSS selector: ${error instanceof Error ? error.message : String(error)}`
+        }],
+        removableCandidates: [],
+        riskScore: 50,
+        summary: 'Analysis failed due to unexpected error'
+      };
     }
-
-    // 6. Check specificity issues
-    const specificityCheck = this.checkSpecificity(context.newRule);
-    suggestions.push(...specificityCheck.suggestions);
-    riskScore += specificityCheck.riskContribution;
-
-    // 7. Check naming conventions
-    const namingCheck = this.checkNamingConvention(context.newRule, context.framework);
-    suggestions.push(...namingCheck.suggestions);
-
-    // 8. Find removable candidates
-    if (context.existingRules) {
-      removableCandidates.push(...this.findRemovableCandidates(context.newRule, context.existingRules));
-    }
-
-    // Generate summary
-    const summary = this.generateSummary(
-      context.newRule,
-      suggestions,
-      duplicates,
-      externalizeCheck.shouldExternalize,
-      globalCheck.shouldMakeGlobal
-    );
-
-    return {
-      ruleId,
-      newRule: context.newRule,
-      shouldExternalize: externalizeCheck.shouldExternalize,
-      shouldMakeGlobal: globalCheck.shouldMakeGlobal,
-      duplicates,
-      suggestions: this.prioritizeSuggestions(suggestions),
-      removableCandidates,
-      riskScore: Math.min(100, riskScore),
-      summary
-    };
   }
 
   /**
@@ -486,40 +526,50 @@ export class CSSAnalyzer {
     suggestions: CSSSuggestion[];
   } {
     const suggestions: CSSSuggestion[] = [];
-    const selector = rule.selector;
 
-    // Check for meaningful names
-    if (/^\.[a-z]$/.test(selector) || /^\.(div|span|container)\d*$/.test(selector)) {
-      suggestions.push({
-        type: 'naming_convention',
-        severity: 'warning',
-        message: 'Use descriptive class names',
-        details: 'Generic names like "div1" or single letters are hard to understand',
-        suggestedAction: 'Use semantic names that describe purpose (e.g., .card-header)'
-      });
-    }
+    try {
+      const selector = rule.selector;
 
-    // BEM recommendation for complex selectors
-    if (selector.includes(' ') && !selector.includes('__') && !selector.includes('--')) {
-      suggestions.push({
-        type: 'naming_convention',
-        severity: 'info',
-        message: 'Consider using BEM naming convention',
-        details: 'BEM (Block__Element--Modifier) creates clear relationships',
-        suggestedAction: 'Rename using BEM: .block__element--modifier',
-        codeExample: this.suggestBEMName(selector)
-      });
-    }
+      // Validate selector before processing
+      if (!selector || typeof selector !== 'string' || selector.length === 0) {
+        return { suggestions };
+      }
 
-    // Framework-specific conventions
-    if (framework === 'react' && selector.includes('_')) {
-      suggestions.push({
-        type: 'naming_convention',
-        severity: 'info',
-        message: 'React typically uses camelCase for CSS Modules',
-        details: 'CSS Modules work better with camelCase class names',
-        suggestedAction: 'Use camelCase: .cardHeader instead of .card_header'
-      });
+      // Check for meaningful names
+      if (/^\.[a-z]$/.test(selector) || /^\.(div|span|container)\d*$/.test(selector)) {
+        suggestions.push({
+          type: 'naming_convention',
+          severity: 'warning',
+          message: 'Use descriptive class names',
+          details: 'Generic names like "div1" or single letters are hard to understand',
+          suggestedAction: 'Use semantic names that describe purpose (e.g., .card-header)'
+        });
+      }
+
+      // BEM recommendation for complex selectors
+      if (selector.includes(' ') && !selector.includes('__') && !selector.includes('--')) {
+        suggestions.push({
+          type: 'naming_convention',
+          severity: 'info',
+          message: 'Consider using BEM naming convention',
+          details: 'BEM (Block__Element--Modifier) creates clear relationships',
+          suggestedAction: 'Rename using BEM: .block__element--modifier',
+          codeExample: this.suggestBEMName(selector)
+        });
+      }
+
+      // Framework-specific conventions
+      if (framework === 'react' && selector.includes('_')) {
+        suggestions.push({
+          type: 'naming_convention',
+          severity: 'info',
+          message: 'React typically uses camelCase for CSS Modules',
+          details: 'CSS Modules work better with camelCase class names',
+          suggestedAction: 'Use camelCase: .cardHeader instead of .card_header'
+        });
+      }
+    } catch (error) {
+      // Silently skip naming convention checks if they fail
     }
 
     return { suggestions };
@@ -544,6 +594,81 @@ export class CSSAnalyzer {
     }
 
     return removable;
+  }
+
+  // ============================================================================
+  // VALIDATION METHODS
+  // ============================================================================
+
+  /**
+   * Validate that a selector is well-formed and safe to process
+   */
+  private isValidSelector(selector: string): boolean {
+    try {
+      // Check for empty or whitespace-only selectors
+      if (!selector || typeof selector !== 'string' || selector.trim().length === 0) {
+        return false;
+      }
+
+      // Limit selector length to prevent processing extremely large selectors
+      if (selector.length > 2000) {
+        return false;
+      }
+
+      // Check for unclosed brackets/quotes
+      const openBrackets = (selector.match(/\[/g) || []).length;
+      const closeBrackets = (selector.match(/\]/g) || []).length;
+      if (openBrackets !== closeBrackets) {
+        return false;
+      }
+
+      // Check for unclosed parentheses
+      const openParens = (selector.match(/\(/g) || []).length;
+      const closeParens = (selector.match(/\)/g) || []).length;
+      if (openParens !== closeParens) {
+        return false;
+      }
+
+      // Check for unclosed quotes (both single and double)
+      const singleQuotes = (selector.match(/'/g) || []).length;
+      const doubleQuotes = (selector.match(/"/g) || []).length;
+      if (singleQuotes % 2 !== 0 || doubleQuotes % 2 !== 0) {
+        return false;
+      }
+
+      return true;
+    } catch {
+      // If validation itself throws, consider selector invalid
+      return false;
+    }
+  }
+
+  /**
+   * Normalize a selector for safe analysis by removing problematic content
+   */
+  private normalizeSelectorForAnalysis(selector: string): string {
+    try {
+      if (!selector || typeof selector !== 'string') {
+        return '';
+      }
+
+      // Remove pseudo-elements and pseudo-classes that contain content
+      let normalized = selector
+        .replace(/:not\([^)]*\)/gi, '') // Remove :not() pseudo-class with content
+        .replace(/::?before/gi, '')
+        .replace(/::?after/gi, '')
+        .replace(/::?first-line/gi, '')
+        .replace(/::?first-letter/gi, '');
+
+      // Limit length to prevent excessive processing
+      if (normalized.length > 2000) {
+        normalized = normalized.substring(0, 2000);
+      }
+
+      return normalized;
+    } catch {
+      return '';
+    }
   }
 
   // ============================================================================
@@ -583,12 +708,24 @@ export class CSSAnalyzer {
   }
 
   private calculateSpecificity(selector: string): { ids: number; classes: number; elements: number; depth: number } {
-    const ids = (selector.match(/#/g) || []).length;
-    const classes = (selector.match(/\./g) || []).length;
-    const elements = (selector.match(/^[a-z]+|[\s>+~][a-z]+/gi) || []).length;
-    const depth = selector.split(/[\s>+~]/).length;
+    try {
+      // Sanitize and normalize selector
+      const normalizedSelector = this.normalizeSelectorForAnalysis(selector);
 
-    return { ids, classes, elements, depth };
+      if (!normalizedSelector) {
+        return { ids: 0, classes: 0, elements: 0, depth: 0 };
+      }
+
+      const ids = (normalizedSelector.match(/#/g) || []).length;
+      const classes = (normalizedSelector.match(/\./g) || []).length;
+      const elements = (normalizedSelector.match(/^[a-z]+|[\s>+~][a-z]+/gi) || []).length;
+      const depth = Math.min(normalizedSelector.split(/[\s>+~]/).length, 100); // Cap depth at 100
+
+      return { ids, classes, elements, depth };
+    } catch {
+      // Return safe defaults if parsing fails
+      return { ids: 0, classes: 0, elements: 0, depth: 0 };
+    }
   }
 
   private isReusablePattern(rule: CSSRule): boolean {
@@ -645,13 +782,29 @@ export class CSSAnalyzer {
   }
 
   private suggestBEMName(selector: string): string {
-    const parts = selector.trim().split(/\s+/);
-    if (parts.length >= 2) {
-      const block = parts[0].replace('.', '');
-      const element = parts[parts.length - 1].replace('.', '');
-      return `.${block}__${element}`;
+    try {
+      const trimmed = selector.trim();
+
+      // Handle edge cases
+      if (!trimmed || trimmed.length > 1000) {
+        return selector;
+      }
+
+      const parts = trimmed.split(/\s+/).filter(p => p.length > 0);
+
+      if (parts.length >= 2) {
+        const block = parts[0].replace(/[^a-zA-Z0-9_-]/g, '');
+        const element = parts[parts.length - 1].replace(/[^a-zA-Z0-9_-]/g, '');
+
+        if (block && element) {
+          return `.${block}__${element}`;
+        }
+      }
+
+      return selector;
+    } catch {
+      return selector;
     }
-    return selector;
   }
 
   private completelyOverrides(newRule: CSSRule, existing: CSSRule): boolean {
@@ -664,15 +817,23 @@ export class CSSAnalyzer {
   }
 
   private isLikelyUnused(rule: CSSRule): boolean {
-    // Heuristics for likely unused rules
-    const selector = rule.selector;
+    try {
+      const selector = rule.selector;
 
-    // Very specific selectors that might be stale
-    if (selector.includes('[data-v-') || selector.includes('[_ngcontent-')) {
-      return true; // Likely framework-generated and orphaned
+      // Handle edge cases
+      if (!selector || typeof selector !== 'string' || selector.length > 2000) {
+        return false;
+      }
+
+      // Very specific selectors that might be stale
+      if (selector.includes('[data-v-') || selector.includes('[_ngcontent-')) {
+        return true; // Likely framework-generated and orphaned
+      }
+
+      return false;
+    } catch {
+      return false;
     }
-
-    return false;
   }
 
   private prioritizeSuggestions(suggestions: CSSSuggestion[]): CSSSuggestion[] {
