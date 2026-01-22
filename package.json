@@ -1,6 +1,6 @@
 {
   "name": "@trentapps/manager-protocol",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "Enterprise Agent Supervisor - Rules Engine MCP Server for AI Agent Governance",
   "type": "module",
   "main": "dist/index.js",
