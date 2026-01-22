@@ -494,6 +494,52 @@ If deploying in a production environment with network access:
 
 ---
 
+## Considerations & Limitations
+
+Before deploying the Agent Supervisor, understand these important points:
+
+### Advisory, Not Enforcement
+
+The supervisor evaluates actions and provides recommendations based on configured rules. **It does not enforce** - the calling agent or application must respect the supervisor's decisions. A misconfigured or malicious agent could ignore governance responses entirely.
+
+### Rule Quality Matters
+
+The supervisor is only as good as its rules:
+- **Overly permissive rules** may allow risky actions to proceed
+- **Overly strict rules** may block legitimate operations
+- **Missing rules** won't catch edge cases specific to your domain
+
+Test your rule configurations thoroughly before production use. Start with a preset (`standard` or `strict`) and customize from there.
+
+### Token Security
+
+If using GitHub integration for tasks and approvals:
+- The `GITHUB_TOKEN` requires repository access (`repo` scope)
+- Protect this token as you would any credential
+- Use fine-grained personal access tokens where possible
+- Consider separate tokens for different environments
+
+### Audit Data Sensitivity
+
+Audit logs may contain:
+- Action parameters (potentially sensitive data)
+- User and agent identifiers
+- Timestamps and patterns of activity
+
+Secure the audit database (`AUDIT_DB_PATH`) appropriately and implement retention policies for your compliance requirements.
+
+### Not a Security Substitute
+
+This tool complements but does not replace:
+- Proper authentication and authorization systems
+- Network security and firewalls
+- Input validation and sanitization
+- Security code reviews and penetration testing
+
+Use at your own discretion. The MIT License provides this software "as is" without warranty.
+
+---
+
 ## Architecture
 
 ```
