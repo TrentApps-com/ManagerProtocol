@@ -4,8 +4,12 @@
  * Model Context Protocol server exposing agent governance tools.
  */
 
+import { exec } from 'child_process';
+import { promisify } from 'util';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+
+const execAsync = promisify(exec);
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
@@ -956,9 +960,119 @@ This marks your session as disconnected and will be cleaned up after retention p
       },
       required: ['agentId']
     }
+  },
+  // ============================================================================
+  // GITHUB ISSUE TOOLS (uses gh CLI - auto-detects current repository)
+  // ============================================================================
+  {
+    name: 'create_github_issue',
+    description: `Create a GitHub issue in the current repository using the gh CLI.
+
+Automatically detects the repository from the current git context.
+Requires gh CLI to be installed and authenticated.
+
+Returns the created issue URL and number.`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        title: { type: 'string', description: 'Issue title' },
+        body: { type: 'string', description: 'Issue body/description (supports markdown)' },
+        labels: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Labels to apply (e.g., ["bug", "enhancement"])'
+        },
+        assignees: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'GitHub usernames to assign'
+        },
+        milestone: { type: 'string', description: 'Milestone name or number' },
+        project: { type: 'string', description: 'Project name to add issue to' }
+      },
+      required: ['title']
+    }
+  },
+  {
+    name: 'list_github_issues',
+    description: `List GitHub issues in the current repository using the gh CLI.
+
+Automatically detects the repository from the current git context.
+Requires gh CLI to be installed and authenticated.`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        state: {
+          type: 'string',
+          enum: ['open', 'closed', 'all'],
+          description: 'Filter by state (default: open)'
+        },
+        labels: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Filter by labels'
+        },
+        assignee: { type: 'string', description: 'Filter by assignee' },
+        limit: { type: 'number', description: 'Max issues to return (default: 30)' }
+      }
+    }
+  },
+  {
+    name: 'update_github_issue',
+    description: `Update a GitHub issue in the current repository using the gh CLI.
+
+Automatically detects the repository from the current git context.
+Requires gh CLI to be installed and authenticated.`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        issue: { type: 'number', description: 'Issue number to update' },
+        title: { type: 'string', description: 'New title' },
+        body: { type: 'string', description: 'New body' },
+        addLabels: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Labels to add'
+        },
+        removeLabels: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Labels to remove'
+        },
+        addAssignees: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Assignees to add'
+        },
+        state: {
+          type: 'string',
+          enum: ['open', 'closed'],
+          description: 'Set issue state'
+        }
+      },
+      required: ['issue']
+    }
+  },
+  {
+    name: 'close_github_issue',
+    description: `Close a GitHub issue with an optional comment.
+
+Automatically detects the repository from the current git context.
+Requires gh CLI to be installed and authenticated.`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        issue: { type: 'number', description: 'Issue number to close' },
+        comment: { type: 'string', description: 'Optional closing comment' },
+        reason: {
+          type: 'string',
+          enum: ['completed', 'not_planned'],
+          description: 'Close reason (default: completed)'
+        }
+      },
+      required: ['issue']
+    }
   }
-  // Note: GitHub-based task management tools have been removed.
-  // Use the GitHub MCP server separately for GitHub Issues functionality.
 ];
 
 // Create and configure MCP server
@@ -1657,7 +1771,113 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
         };
       }
 
-      // Note: Task management tools removed - use GitHub MCP server for GitHub Issues
+      // GitHub Issue tools (using gh CLI)
+      case 'create_github_issue': {
+        const validated = z.object({
+          title: z.string(),
+          body: z.string().optional(),
+          labels: z.array(z.string()).optional(),
+          assignees: z.array(z.string()).optional(),
+          milestone: z.string().optional(),
+          project: z.string().optional()
+        }).parse(args);
+
+        const cmdParts = ['gh', 'issue', 'create', '--title', JSON.stringify(validated.title)];
+        if (validated.body) cmdParts.push('--body', JSON.stringify(validated.body));
+        if (validated.labels?.length) cmdParts.push('--label', validated.labels.join(','));
+        if (validated.assignees?.length) cmdParts.push('--assignee', validated.assignees.join(','));
+        if (validated.milestone) cmdParts.push('--milestone', validated.milestone);
+        if (validated.project) cmdParts.push('--project', validated.project);
+
+        try {
+          const { stdout } = await execAsync(cmdParts.join(' '));
+          const url = stdout.trim();
+          const issueNumber = url.match(/\/issues\/(\d+)/)?.[1];
+          return resp({ success: true, url, issueNumber: issueNumber ? parseInt(issueNumber) : null });
+        } catch (err: any) {
+          return resp({ success: false, error: err.stderr || err.message });
+        }
+      }
+
+      case 'list_github_issues': {
+        const validated = z.object({
+          state: z.enum(['open', 'closed', 'all']).optional(),
+          labels: z.array(z.string()).optional(),
+          assignee: z.string().optional(),
+          limit: z.number().optional()
+        }).parse(args || {});
+
+        const cmdParts = ['gh', 'issue', 'list', '--json', 'number,title,state,labels,assignees,url'];
+        if (validated.state) cmdParts.push('--state', validated.state);
+        if (validated.labels?.length) cmdParts.push('--label', validated.labels.join(','));
+        if (validated.assignee) cmdParts.push('--assignee', validated.assignee);
+        cmdParts.push('--limit', String(validated.limit || 30));
+
+        try {
+          const { stdout } = await execAsync(cmdParts.join(' '));
+          const issues = JSON.parse(stdout);
+          return resp({ success: true, issues, count: issues.length });
+        } catch (err: any) {
+          return resp({ success: false, error: err.stderr || err.message });
+        }
+      }
+
+      case 'update_github_issue': {
+        const validated = z.object({
+          issue: z.number(),
+          title: z.string().optional(),
+          body: z.string().optional(),
+          addLabels: z.array(z.string()).optional(),
+          removeLabels: z.array(z.string()).optional(),
+          addAssignees: z.array(z.string()).optional(),
+          state: z.enum(['open', 'closed']).optional()
+        }).parse(args);
+
+        const cmdParts = ['gh', 'issue', 'edit', String(validated.issue)];
+        if (validated.title) cmdParts.push('--title', JSON.stringify(validated.title));
+        if (validated.body) cmdParts.push('--body', JSON.stringify(validated.body));
+        if (validated.addLabels?.length) cmdParts.push('--add-label', validated.addLabels.join(','));
+        if (validated.removeLabels?.length) cmdParts.push('--remove-label', validated.removeLabels.join(','));
+        if (validated.addAssignees?.length) cmdParts.push('--add-assignee', validated.addAssignees.join(','));
+
+        try {
+          await execAsync(cmdParts.join(' '));
+
+          // Handle state change separately if needed
+          if (validated.state === 'closed') {
+            await execAsync(`gh issue close ${validated.issue}`);
+          } else if (validated.state === 'open') {
+            await execAsync(`gh issue reopen ${validated.issue}`);
+          }
+
+          return resp({ success: true, issue: validated.issue });
+        } catch (err: any) {
+          return resp({ success: false, error: err.stderr || err.message });
+        }
+      }
+
+      case 'close_github_issue': {
+        const validated = z.object({
+          issue: z.number(),
+          comment: z.string().optional(),
+          reason: z.enum(['completed', 'not_planned']).optional()
+        }).parse(args);
+
+        try {
+          // Add comment first if provided
+          if (validated.comment) {
+            await execAsync(`gh issue comment ${validated.issue} --body ${JSON.stringify(validated.comment)}`);
+          }
+
+          // Close the issue
+          const reasonFlag = validated.reason === 'not_planned' ? '--reason "not planned"' : '';
+          await execAsync(`gh issue close ${validated.issue} ${reasonFlag}`.trim());
+
+          return resp({ success: true, issue: validated.issue, closed: true });
+        } catch (err: any) {
+          return resp({ success: false, error: err.stderr || err.message });
+        }
+      }
 
       default:
         throw new Error(`Unknown tool: ${name}`);

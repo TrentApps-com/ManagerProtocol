@@ -454,8 +454,6 @@ Built-in support for:
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `GITHUB_TOKEN` | GitHub personal access token for task management and approvals | Required for GitHub features |
-| `DASHBOARD_PORT` | HTTP dashboard port | `3100` |
 | `AUDIT_DB_PATH` | Path to SQLite audit database | `./data/audit.db` |
 | `NODE_ENV` | Environment (development/production) | `development` |
 | `DEBUG` | Enable debug logging | `false` |
@@ -476,13 +474,6 @@ The Agent Supervisor MCP server is designed to run **locally** alongside your AI
 - **No CORS required** - The MCP protocol uses stdio for communication, not HTTP requests
 - **No network exposure** - The server doesn't listen on any network ports by default
 - **Process isolation** - Runs as a child process of the MCP client
-
-### Dashboard (Optional)
-
-The optional HTTP dashboard (for monitoring and approvals) runs on `localhost:3100` by default:
-- Only accessible from the local machine
-- Not exposed to the network
-- For remote access, use SSH tunneling or a reverse proxy with authentication
 
 ### Production Considerations
 
@@ -511,13 +502,9 @@ The supervisor is only as good as its rules:
 
 Test your rule configurations thoroughly before production use. Start with a preset (`standard` or `strict`) and customize from there.
 
-### Token Security
+### GitHub CLI Authentication
 
-If using GitHub integration for tasks and approvals:
-- The `GITHUB_TOKEN` requires repository access (`repo` scope)
-- Protect this token as you would any credential
-- Use fine-grained personal access tokens where possible
-- Consider separate tokens for different environments
+GitHub issue tools use the `gh` CLI which handles authentication via `gh auth login`. No environment variables needed.
 
 ### Audit Data Sensitivity
 
@@ -547,27 +534,22 @@ Use at your own discretion. The MIT License provides this software "as is" witho
 │                      Agent Supervisor                             │
 ├──────────────────────────────────────────────────────────────────┤
 │  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────────┐   │
-│  │   Rules     │  │    Rate     │  │    GitHub Approval      │   │
-│  │   Engine    │  │   Limiter   │  │       Manager           │   │
-│  └─────────────┘  └─────────────┘  └─────────────────────────┘   │
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────────┐   │
-│  │    Task     │  │     App     │  │      CSS                │   │
-│  │   Manager   │  │   Monitor   │  │     Analyzer            │   │
+│  │   Rules     │  │    Rate     │  │      CSS                │   │
+│  │   Engine    │  │   Limiter   │  │     Analyzer            │   │
 │  └─────────────┘  └─────────────┘  └─────────────────────────┘   │
 │  ┌───────────────────────────────────────────────────────────┐   │
 │  │                     Audit Logger (SQLite)                  │   │
 │  └───────────────────────────────────────────────────────────┘   │
 ├──────────────────────────────────────────────────────────────────┤
 │                        MCP Server (stdio)                         │
-│  evaluate_action | create_task | check_app_health | css_eval     │
-│  log_event | register_session | list_rules | require_approval    │
+│  evaluate_action | create_github_issue | css_eval | log_event    │
+│  list_rules | require_approval | register_session                │
 └──────────────────────────────────────────────────────────────────┘
-          │                              │
-          ▼                              ▼
-┌─────────────────────┐      ┌─────────────────────┐
-│   GitHub Issues     │      │  HTTP Dashboard     │
-│   (Task Storage)    │      │  (localhost:3100)   │
-└─────────────────────┘      └─────────────────────┘
+          │
+          ▼
+┌─────────────────────┐
+│   GitHub Issues     │  (via gh CLI)
+└─────────────────────┘
 ```
 
 ---
