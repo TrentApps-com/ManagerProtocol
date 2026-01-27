@@ -7,9 +7,9 @@
 
 import { startServer } from './server.js';
 
-// Package version from package.json
-const VERSION = '1.0.0';
-const PROGRAM_NAME = 'agent-supervisor';
+// Package version - keep in sync with package.json
+const VERSION = '1.3.1';
+const PROGRAM_NAME = 'manager-protocol';
 
 interface CLIOptions {
   help: boolean;
