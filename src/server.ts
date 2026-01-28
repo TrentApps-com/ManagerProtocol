@@ -1271,24 +1271,23 @@ ${validated.reason}${riskLabel}${detailsSection}`;
           });
         } catch (elicitError: any) {
           // Elicitation not supported - fall back to GitHub issue
-          const priorityLabel = validated.priority || 'normal';
-          const riskInfo = validated.riskScore !== undefined ? `\n\n**Risk Score:** ${validated.riskScore}/100` : '';
+          const priorityInfo = validated.priority ? `\n**Priority:** ${validated.priority.toUpperCase()}` : '';
+          const riskInfo = validated.riskScore !== undefined ? `\n**Risk Score:** ${validated.riskScore}/100` : '';
           const detailsInfo = validated.details ? `\n\n**Details:**\n${validated.details}` : '';
 
           const issueBody = `## Approval Required
 
-${validated.reason}${riskInfo}${detailsInfo}
+${validated.reason}${priorityInfo}${riskInfo}${detailsInfo}
 
 ---
 *This approval request was created automatically because MCP elicitation is not available.*
 *Add the \`approved\` label to approve, or close as "not planned" to deny.*`;
 
-          const labels = ['needs-approval', priorityLabel];
           const cmdParts = [
             'gh', 'issue', 'create',
             '--title', JSON.stringify(`[Approval Required] ${validated.reason.slice(0, 60)}`),
             '--body', JSON.stringify(issueBody),
-            '--label', labels.join(',')
+            '--label', 'needs-approval'
           ];
 
           try {
