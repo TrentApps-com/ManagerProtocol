@@ -2,14 +2,15 @@
  * Enterprise Agent Supervisor - Main Supervisor Class
  *
  * Orchestrates all governance components for agent supervision.
+ *
+ * Note: GitHub-based approval and task management has been removed.
+ * Use the GitHub MCP server separately for GitHub functionality.
  */
 
 import { v4 as uuidv4 } from 'uuid';
 import { RulesEngine } from '../engine/RulesEngine.js';
 import { RateLimiter } from '../engine/RateLimiter.js';
 import { AuditLogger, type AuditLoggerOptions } from '../engine/AuditLogger.js';
-import { GitHubApprovalManager, type GitHubApprovalOptions } from '../engine/GitHubApprovalManager.js';
-import { AppMonitor, type AppMonitorOptions } from '../engine/AppMonitor.js';
 import { ArchitectureDetector } from '../analyzers/ArchitectureDetector.js';
 import { allBuiltInRules, defaultRateLimits, rulePresets } from '../rules/index.js';
 import type {
@@ -21,18 +22,12 @@ import type {
   ApprovalRequest,
   AuditEvent,
   BusinessRule,
-  RateLimitConfig,
-  MonitoredApp,
-  AppHealthCheckResult,
-  AppStatusHistoryEntry,
-  AppMonitorStats
+  RateLimitConfig
 } from '../types/index.js';
 
 export interface AgentSupervisorOptions {
   config?: Partial<SupervisorConfig>;
   auditOptions?: AuditLoggerOptions;
-  approvalOptions?: GitHubApprovalOptions;
-  appMonitorOptions?: AppMonitorOptions;
 }
 
 /**
@@ -53,9 +48,10 @@ export class AgentSupervisor {
   private rulesEngine: RulesEngine;
   private rateLimiter: RateLimiter;
   private auditLogger: AuditLogger;
-  private approvalManager: GitHubApprovalManager;
-  private appMonitor: AppMonitor;
   private initialized: boolean = false;
+
+  /** In-memory storage for approval requests (GitHub integration removed) */
+  private approvalRequests: Map<string, ApprovalRequest> = new Map();
 
   /**
    * Cache for evaluation results
@@ -75,8 +71,6 @@ export class AgentSupervisor {
     this.rulesEngine = new RulesEngine();
     this.rateLimiter = new RateLimiter();
     this.auditLogger = new AuditLogger(options.auditOptions);
-    this.approvalManager = new GitHubApprovalManager(options.approvalOptions);
-    this.appMonitor = new AppMonitor(options.appMonitorOptions);
   }
 
   /**
@@ -363,7 +357,10 @@ export class AgentSupervisor {
   }
 
   /**
-   * Request human approval for an action via GitHub issue
+   * Request human approval for an action (in-memory storage)
+   *
+   * Note: GitHub-based approvals have been removed. Use GitHub MCP separately.
+   * This method now uses in-memory storage for approval requests.
    */
   async requireHumanApproval(params: {
     reason: string;
@@ -375,27 +372,30 @@ export class AgentSupervisor {
     riskScore?: number;
     violations?: string[];
     warnings?: string[];
-    repo?: string;
   }): Promise<ApprovalRequest> {
     await this.ensureInitialized();
 
+    const requestId = `approval-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
     const actionId = params.actionId || `action-${Date.now()}`;
-    const detailsObj = typeof params.details === 'string'
-      ? { description: params.details }
-      : params.details;
 
-    const approval = await this.approvalManager.createApprovalIssue({
-      repo: params.repo,
+    const approval: ApprovalRequest = {
+      requestId,
       actionId,
-      action: params.action || 'Unspecified action',
       reason: params.reason,
-      details: detailsObj,
-      priority: params.priority,
+      status: 'pending',
+      priority: params.priority || 'normal',
+      createdAt: new Date().toISOString(),
+      expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(), // 24 hours
+      context: params.context,
       riskScore: params.riskScore,
-      violations: params.violations,
-      warnings: params.warnings,
-      context: params.context
-    });
+      metadata: {
+        action: params.action || 'Unspecified action',
+        warnings: params.warnings
+      }
+    };
+
+    // Store in memory
+    this.approvalRequests.set(requestId, approval);
 
     // Log the approval request
     await this.auditLogger.log({
@@ -404,8 +404,6 @@ export class AgentSupervisor {
       outcome: 'pending',
       details: {
         requestId: approval.requestId,
-        issueNumber: approval.issueNumber,
-        issueUrl: approval.issueUrl,
         reason: params.reason,
         riskScore: params.riskScore
       }
@@ -484,100 +482,98 @@ export class AgentSupervisor {
   }
 
   // ============================================================================
-  // APPROVAL MANAGEMENT
+  // APPROVAL MANAGEMENT (In-memory - GitHub integration removed)
   // ============================================================================
 
   /**
-   * Approve a pending request via GitHub
-   * @param requestIdOrIssueNumber - Either "approval-123" or just "123" (issue number)
+   * Approve a pending request (in-memory)
    */
   async approveRequest(
-    requestIdOrIssueNumber: string | number,
+    requestId: string,
     approverId: string,
-    comments?: string,
-    repo?: string
+    comments?: string
   ): Promise<void> {
-    const issueNumber = typeof requestIdOrIssueNumber === 'string'
-      ? parseInt(requestIdOrIssueNumber.replace('approval-', ''))
-      : requestIdOrIssueNumber;
+    const approval = this.approvalRequests.get(requestId);
+    if (!approval) {
+      throw new Error(`Approval request not found: ${requestId}`);
+    }
 
-    await this.approvalManager.approveRequest({
-      repo,
-      issueNumber,
-      approverId,
+    approval.status = 'approved';
+    approval.metadata = {
+      ...approval.metadata,
+      reviewedAt: new Date().toISOString(),
+      reviewedBy: approverId,
       comments
-    });
+    };
+    this.approvalRequests.set(requestId, approval);
 
     await this.auditLogger.log({
       eventType: 'approval_granted',
-      action: `Approval granted for issue #${issueNumber}`,
+      action: `Approval granted for ${requestId}`,
       outcome: 'success',
       userId: approverId,
-      details: { issueNumber, comments }
+      details: { requestId, comments }
     });
   }
 
   /**
-   * Deny a pending request via GitHub
-   * @param requestIdOrIssueNumber - Either "approval-123" or just "123" (issue number)
+   * Deny a pending request (in-memory)
    */
   async denyRequest(
-    requestIdOrIssueNumber: string | number,
+    requestId: string,
     denierId: string,
-    reason?: string,
-    repo?: string
+    reason?: string
   ): Promise<void> {
-    const issueNumber = typeof requestIdOrIssueNumber === 'string'
-      ? parseInt(requestIdOrIssueNumber.replace('approval-', ''))
-      : requestIdOrIssueNumber;
+    const approval = this.approvalRequests.get(requestId);
+    if (!approval) {
+      throw new Error(`Approval request not found: ${requestId}`);
+    }
 
-    await this.approvalManager.denyRequest({
-      repo,
-      issueNumber,
-      denierId,
-      reason
-    });
+    approval.status = 'denied';
+    approval.metadata = {
+      ...approval.metadata,
+      reviewedAt: new Date().toISOString(),
+      reviewedBy: denierId,
+      denialReason: reason
+    };
+    this.approvalRequests.set(requestId, approval);
 
     await this.auditLogger.log({
       eventType: 'approval_denied',
-      action: `Approval denied for issue #${issueNumber}`,
+      action: `Approval denied for ${requestId}`,
       outcome: 'success',
       userId: denierId,
-      details: { issueNumber, reason }
+      details: { requestId, reason }
     });
   }
 
   /**
-   * Get pending approvals from GitHub
-   * Returns empty array if no repo is provided and no default is configured
+   * Get pending approvals (in-memory)
    */
-  async getPendingApprovals(repo?: string): Promise<ApprovalRequest[]> {
-    try {
-      return await this.approvalManager.getPendingApprovals(repo);
-    } catch (error: any) {
-      // If no repo is available, return empty array
-      if (error.message === 'Repository required') {
-        return [];
+  async getPendingApprovals(): Promise<ApprovalRequest[]> {
+    const now = Date.now();
+    const pending: ApprovalRequest[] = [];
+
+    for (const approval of this.approvalRequests.values()) {
+      // Check if expired
+      if (approval.expiresAt && new Date(approval.expiresAt).getTime() < now) {
+        approval.status = 'expired';
+        continue;
       }
-      throw error;
+      if (approval.status === 'pending') {
+        pending.push(approval);
+      }
     }
+
+    return pending;
   }
 
   /**
-   * Check if request is approved via GitHub
-   * @param requestIdOrIssueNumber - Either "approval-123" or just "123" (issue number)
+   * Check if request is approved (in-memory)
    */
-  async isApproved(requestIdOrIssueNumber: string | number, repo?: string): Promise<boolean> {
-    const issueNumber = typeof requestIdOrIssueNumber === 'string'
-      ? parseInt(requestIdOrIssueNumber.replace('approval-', ''))
-      : requestIdOrIssueNumber;
-
-    const status = await this.approvalManager.checkApprovalStatus({
-      repo,
-      issueNumber
-    });
-
-    return status.status === 'approved';
+  async isApproved(requestId: string): Promise<boolean> {
+    const approval = this.approvalRequests.get(requestId);
+    return approval?.status === 'approved';
   }
 
   // ============================================================================
@@ -606,25 +602,37 @@ export class AgentSupervisor {
   }
 
   /**
-   * Get approval statistics
+   * Get approval statistics (in-memory)
    */
-  async getApprovalStats(repo?: string): Promise<{
+  async getApprovalStats(): Promise<{
     total: number;
     pending: number;
+    approved: number;
+    denied: number;
+    expired: number;
     byPriority: Record<string, number>;
   }> {
-    const approvals = await this.getPendingApprovals(repo);
+    let total = 0;
+    let pending = 0;
+    let approved = 0;
+    let denied = 0;
+    let expired = 0;
     const byPriority: Record<string, number> = {};
 
-    for (const approval of approvals) {
-      byPriority[approval.priority] = (byPriority[approval.priority] || 0) + 1;
+    for (const approval of this.approvalRequests.values()) {
+      total++;
+      switch (approval.status) {
+        case 'pending': pending++; break;
+        case 'approved': approved++; break;
+        case 'denied': denied++; break;
+        case 'expired': expired++; break;
+      }
+      if (approval.status === 'pending') {
+        byPriority[approval.priority] = (byPriority[approval.priority] || 0) + 1;
+      }
     }
 
-    return {
-      total: approvals.length,
-      pending: approvals.length,
-      byPriority
-    };
+    return { total, pending, approved, denied, expired, byPriority };
   }
 
   // ============================================================================
@@ -682,203 +690,12 @@ export class AgentSupervisor {
   }
 
   // ============================================================================
-  // APP MONITORING
-  // ============================================================================
-
-  /**
-   * Add a production app to monitor
-   */
-  async addMonitoredApp(config: {
-    name: string;
-    path: string;
-    port: number;
-    description?: string;
-    healthEndpoint?: string;
-    expectedResponseCode?: number;
-    checkIntervalMs?: number;
-    timeoutMs?: number;
-    tags?: string[];
-    metadata?: Record<string, unknown>;
-    autoStart?: boolean;
-  }): Promise<MonitoredApp> {
-    const app = await this.appMonitor.addApp(config);
-
-    await this.auditLogger.log({
-      eventType: 'system_event',
-      action: 'app_added',
-      outcome: 'success',
-      details: {
-        appId: app.id,
-        appName: app.name,
-        port: app.port,
-        path: app.path
-      }
-    });
-
-    return app;
-  }
-
-  /**
-   * Remove a monitored app
-   */
-  async removeMonitoredApp(appId: string): Promise<boolean> {
-    const app = this.appMonitor.getApp(appId);
-    const result = this.appMonitor.removeApp(appId);
-
-    if (result && app) {
-      await this.auditLogger.log({
-        eventType: 'system_event',
-        action: 'app_removed',
-        outcome: 'success',
-        details: {
-          appId,
-          appName: app.name
-        }
-      });
-    }
-
-    return result;
-  }
-
-  /**
-   * Get a monitored app by ID
-   */
-  getMonitoredApp(appId: string): MonitoredApp | undefined {
-    return this.appMonitor.getApp(appId);
-  }
-
-  /**
-   * Get a monitored app by name
-   */
-  getMonitoredAppByName(name: string): MonitoredApp | undefined {
-    return this.appMonitor.getAppByName(name);
-  }
-
-  /**
-   * Get all monitored apps
-   */
-  getAllMonitoredApps(): MonitoredApp[] {
-    return this.appMonitor.getAllApps();
-  }
-
-  /**
-   * Update a monitored app configuration
-   */
-  async updateMonitoredApp(
-    appId: string,
-    updates: Partial<Omit<MonitoredApp, 'id' | 'createdAt'>>
-  ): Promise<MonitoredApp | undefined> {
-    const result = this.appMonitor.updateApp(appId, updates);
-
-    if (result) {
-      await this.auditLogger.log({
-        eventType: 'config_changed',
-        action: 'app_updated',
-        outcome: 'success',
-        details: {
-          appId,
-          appName: result.name,
-          updates: Object.keys(updates)
-        }
-      });
-    }
-
-    return result;
-  }
-
-  /**
-   * Check health of a specific app
-   */
-  async checkAppHealth(appId: string): Promise<AppHealthCheckResult> {
-    return this.appMonitor.checkAppHealth(appId);
-  }
-
-  /**
-   * Check health of all monitored apps
-   */
-  async checkAllAppsHealth(): Promise<AppHealthCheckResult[]> {
-    return this.appMonitor.checkAllApps();
-  }
-
-  /**
-   * Get last health check result for an app
-   */
-  getLastAppHealthCheck(appId: string): AppHealthCheckResult | undefined {
-    return this.appMonitor.getLastCheckResult(appId);
-  }
-
-  /**
-   * Get status history for an app
-   */
-  getAppStatusHistory(appId: string, limit?: number): AppStatusHistoryEntry[] {
-    return this.appMonitor.getStatusHistory(appId, limit);
-  }
-
-  /**
-   * Enable/disable app monitoring
-   */
-  setAppMonitoringEnabled(appId: string, enabled: boolean): boolean {
-    return this.appMonitor.setAppEnabled(appId, enabled);
-  }
-
-  /**
-   * Get app monitoring statistics
-   */
-  getAppMonitorStats(): AppMonitorStats {
-    return this.appMonitor.getStats();
-  }
-
-  /**
-   * Find apps by tag
-   */
-  findAppsByTag(tag: string): MonitoredApp[] {
-    return this.appMonitor.findAppsByTag(tag);
-  }
-
-  /**
-   * Get apps that are currently offline
-   */
-  getOfflineApps(): MonitoredApp[] {
-    return this.appMonitor.getOfflineApps();
-  }
-
-  /**
-   * Get apps that are in degraded state
-   */
-  getDegradedApps(): MonitoredApp[] {
-    return this.appMonitor.getDegradedApps();
-  }
-
-  /**
-   * Scan production directory for potential apps
-   */
-  async scanForApps(): Promise<Array<{
-    name: string;
-    path: string;
-    type: string;
-    hasPackageJson: boolean;
-    potentialPorts: number[];
-  }>> {
-    return this.appMonitor.scanForApps();
-  }
-
-  /**
-   * Get logs for a monitored app
-   */
-  async getAppLogs(appId: string, lines?: number): Promise<{
-    logs: string;
-    source: string;
-  }> {
-    return this.appMonitor.getAppLogs(appId, lines);
-  }
-
-  // ============================================================================
   // HELPERS
   // ============================================================================
 
   private buildConfig(partial?: Partial<SupervisorConfig>): SupervisorConfig {
     return {
-      version: partial?.version || '1.1.1',
+      version: partial?.version || '1.3.1',
       name: partial?.name || 'Agent Supervisor',
       environment: partial?.environment || 'development',
       strictMode: partial?.strictMode ?? false,
@@ -911,7 +728,7 @@ export class AgentSupervisor {
   }
 
   /**
-   * Reload audit log from file (for dashboard refresh)
+   * Reload audit log from database
    */
   async reloadAuditLog(): Promise<void> {
     await this.auditLogger.reload();

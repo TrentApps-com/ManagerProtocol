@@ -4,8 +4,12 @@
  * Model Context Protocol server exposing agent governance tools.
  */
 
+import { exec } from 'child_process';
+import { promisify } from 'util';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+
+const execAsync = promisify(exec);
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
@@ -17,7 +21,6 @@ import {
 import { AgentSupervisor } from './supervisor/AgentSupervisor.js';
 import { projectTracker } from './supervisor/ProjectTracker.js';
 import { rulePresets } from './rules/index.js';
-import { taskManager } from './engine/TaskManager.js';
 import { cssAnalyzer, type CSSAnalysisContext, type CSSRule } from './analyzers/index.js';
 import { z } from 'zod';
 import {
@@ -83,16 +86,6 @@ const json = (obj: unknown) => JSON.stringify(obj);
 
 /** MCP text response wrapper */
 const resp = (obj: unknown) => ({ content: [{ type: 'text' as const, text: json(obj) }] });
-
-/** Slim task: only essential fields */
-const slimTask = (t: any) => ({
-  id: t.id,
-  title: t.title,
-  status: t.status,
-  priority: t.priority,
-  labels: t.labels,
-  url: t.metadata?.url
-});
 
 /** Slim evaluation result */
 const slimEval = (r: any) => ({
@@ -176,68 +169,22 @@ const AddRateLimitArgsSchema = z.object({
   config: RateLimitConfigSchema
 });
 
-const AddMonitoredAppArgsSchema = z.object({
-  name: z.string().min(1),
-  path: z.string().min(1),
-  port: z.number().min(1).max(65535),
-  description: z.string().optional(),
-  healthEndpoint: z.string().optional(),
-  expectedResponseCode: z.number().optional(),
-  checkIntervalMs: z.number().min(5000).optional(),
-  timeoutMs: z.number().min(1000).optional(),
-  autoStart: z.boolean().optional(),
-  tags: z.array(z.string()).optional(),
-  metadata: z.record(z.unknown()).optional()
-});
-
-const UpdateMonitoredAppArgsSchema = z.object({
-  appId: z.string(),
-  updates: z.object({
-    name: z.string().optional(),
-    description: z.string().optional(),
-    healthEndpoint: z.string().optional(),
-    expectedResponseCode: z.number().optional(),
-    checkIntervalMs: z.number().min(5000).optional(),
-    timeoutMs: z.number().min(1000).optional(),
-    enabled: z.boolean().optional(),
-    tags: z.array(z.string()).optional(),
-    metadata: z.record(z.unknown()).optional()
-  })
-});
-
 const ExportAuditLogArgsSchema = z.object({
   since: z.string().optional(),
   until: z.string().optional(),
   eventType: AuditEventTypeSchema.optional()
 });
 
-const GetAppStatusArgsSchema = z.object({
-  appId: z.string().optional(),
-  appName: z.string().optional(),
-  historyLimit: z.number().optional()
-}).refine(data => data.appId || data.appName, {
-  message: "Either appId or appName must be provided"
-});
-
-const CheckAppHealthArgsSchema = z.object({
-  appId: z.string().optional(),
-  appName: z.string().optional()
-}).refine(data => data.appId || data.appName, {
-  message: "Either appId or appName must be provided"
-});
-
 const ApproveRequestArgsSchema = z.object({
   requestId: z.string(),
   approverId: z.string(),
-  comments: z.string().optional(),
-  repo: z.string().optional()
+  comments: z.string().optional()
 });
 
 const DenyRequestArgsSchema = z.object({
   requestId: z.string(),
   denierId: z.string(),
-  reason: z.string().optional(),
-  repo: z.string().optional()
+  reason: z.string().optional()
 });
 
 const RemoveRuleArgsSchema = z.object({
@@ -246,105 +193,6 @@ const RemoveRuleArgsSchema = z.object({
 
 const GetAuditStatsArgsSchema = z.object({
   since: z.string().optional()
-});
-
-const RemoveMonitoredAppArgsSchema = z.object({
-  appId: z.string()
-});
-
-const SetAppMonitoringEnabledArgsSchema = z.object({
-  appId: z.string(),
-  enabled: z.boolean()
-});
-
-const GetAppLogsArgsSchema = z.object({
-  appId: z.string().optional(),
-  appName: z.string().optional(),
-  lines: z.number().optional()
-}).refine(data => data.appId || data.appName, {
-  message: "Either appId or appName must be provided"
-});
-
-const GetAppStatusHistoryArgsSchema = z.object({
-  appId: z.string().optional(),
-  appName: z.string().optional(),
-  limit: z.number().optional()
-}).refine(data => data.appId || data.appName, {
-  message: "Either appId or appName must be provided"
-});
-
-// Task management schemas
-const CreateTaskArgsSchema = z.object({
-  projectName: z.string().optional(),
-  title: z.string(),
-  description: z.string().optional(),
-  priority: z.enum(['critical', 'high', 'medium', 'low']).optional(),
-  assignee: z.string().optional(),
-  labels: z.array(z.string()).optional(),
-  dueDate: z.string().optional(),
-  estimatedHours: z.number().optional(),
-  parentTaskId: z.string().optional(),
-  dependencies: z.array(z.string()).optional(),
-  metadata: z.record(z.unknown()).optional(),
-  needsApproval: z.boolean().optional()
-});
-
-const GetTasksArgsSchema = z.object({
-  projectName: z.string().optional(),
-  status: z.enum(['pending', 'in_progress', 'completed', 'blocked', 'cancelled']).optional(),
-  priority: z.enum(['critical', 'high', 'medium', 'low']).optional(),
-  assignee: z.string().optional(),
-  labels: z.array(z.string()).optional()
-});
-
-const GetTaskArgsSchema = z.object({
-  projectName: z.string().optional(),
-  taskId: z.string()
-});
-
-const UpdateTaskArgsSchema = z.object({
-  projectName: z.string().optional(),
-  taskId: z.string(),
-  title: z.string().optional(),
-  description: z.string().optional(),
-  priority: z.enum(['critical', 'high', 'medium', 'low']).optional(),
-  status: z.enum(['pending', 'in_progress', 'completed', 'blocked', 'cancelled']).optional(),
-  assignee: z.string().optional(),
-  labels: z.array(z.string()).optional(),
-  comment: z.string().optional(),
-  commits: z.array(z.string()).optional()
-});
-
-const UpdateTaskStatusArgsSchema = z.object({
-  projectName: z.string().optional(),
-  taskId: z.string(),
-  status: z.enum(['pending', 'in_progress', 'completed', 'blocked', 'cancelled'])
-});
-
-const AddTaskCommentArgsSchema = z.object({
-  projectName: z.string().optional(),
-  taskId: z.string(),
-  comment: z.string().optional(),
-  commits: z.array(z.string()).optional()
-});
-
-const LinkCommitsArgsSchema = z.object({
-  projectName: z.string().optional(),
-  taskId: z.string(),
-  commits: z.array(z.string()),
-  message: z.string().optional()
-});
-
-const CloseTaskWithCommentArgsSchema = z.object({
-  projectName: z.string().optional(),
-  taskId: z.string(),
-  resolution: z.string(),
-  commits: z.array(z.string()).optional()
-});
-
-const SearchTasksArgsSchema = z.object({
-  query: z.string(),
-  projectName: z.string().optional()
 });
 
 // Define MCP tools
@@ -448,7 +296,8 @@ Returns:
 
 Use when an action is high-risk, outside normal parameters, or governance rules require human-in-the-loop.
 
-Returns approval request ID that can be checked later.`,
+This tool prompts the user directly for approval via MCP elicitation.
+Returns the approval decision immediately (approved/denied).`,
     inputSchema: {
       type: 'object',
       properties: {
@@ -501,30 +350,27 @@ All logged events are queryable and exportable.`,
   },
 
   // ============================================================================
-  // APPROVAL MANAGEMENT TOOLS
+  // APPROVAL MANAGEMENT TOOLS (In-memory - GitHub integration removed)
   // ============================================================================
   {
     name: 'check_approval_status',
-    description: 'Check the status of a pending approval request',
+    description: 'Check the status of a pending approval request (in-memory storage)',
     inputSchema: {
       type: 'object',
       properties: {
-        requestId: { type: 'string', description: 'ID of the approval request' },
-        issueNumber: { type: 'number', description: 'GitHub issue number (alternative to requestId)' },
-        repo: { type: 'string', description: 'Repository in owner/repo format (required for GitHub-based approvals)' }
-      }
+        requestId: { type: 'string', description: 'ID of the approval request' }
+      },
+      required: ['requestId']
     }
   },
   {
     name: 'list_pending_approvals',
-    description: 'List all pending approval requests',
+    description: 'List all pending approval requests (in-memory storage)',
     inputSchema: {
       type: 'object',
       properties: {
         priority: { type: 'string', enum: ['urgent', 'high', 'normal', 'low'] },
-        agentId: { type: 'string' },
-        minRiskScore: { type: 'number', minimum: 0, maximum: 100 },
-        repo: { type: 'string', description: 'Repository in owner/repo format (required for GitHub-based approvals)' }
+        minRiskScore: { type: 'number', minimum: 0, maximum: 100 }
       }
     }
   },
@@ -534,10 +380,9 @@ All logged events are queryable and exportable.`,
     inputSchema: {
       type: 'object',
       properties: {
-        requestId: { type: 'string', description: 'ID of the request to approve (or issue number)' },
+        requestId: { type: 'string', description: 'ID of the request to approve' },
         approverId: { type: 'string', description: 'ID of the approver' },
-        comments: { type: 'string', description: 'Approval comments' },
-        repo: { type: 'string', description: 'Repository in owner/repo format (required for GitHub-based approvals)' }
+        comments: { type: 'string', description: 'Approval comments' }
       },
       required: ['requestId', 'approverId']
     }
@@ -548,10 +393,9 @@ All logged events are queryable and exportable.`,
     inputSchema: {
       type: 'object',
       properties: {
-        requestId: { type: 'string', description: 'ID of the request to deny (or issue number)' },
+        requestId: { type: 'string', description: 'ID of the request to deny' },
         denierId: { type: 'string', description: 'ID of the denier' },
-        reason: { type: 'string', description: 'Reason for denial' },
-        repo: { type: 'string', description: 'Repository in owner/repo format (required for GitHub-based approvals)' }
+        reason: { type: 'string', description: 'Reason for denial' }
       },
       required: ['requestId', 'denierId']
     }
@@ -874,12 +718,7 @@ Returns:
     description: 'Check supervisor health and status',
     inputSchema: {
       type: 'object',
-      properties: {
-        repo: {
-          type: 'string',
-          description: 'Optional repository to check pending approvals for (format: owner/repo)'
-        }
-      }
+      properties: {}
     }
   },
 
@@ -1056,193 +895,13 @@ Returns variable suggestions with recommended names.`,
   },
 
   // ============================================================================
-  // APP MONITORING TOOLS
-  // ============================================================================
-  {
-    name: 'add_monitored_app',
-    description: `Add a production application to monitor. The app must exist in /mnt/prod/ or at the specified absolute path.
-
-Monitors:
-- Port availability (is the app listening?)
-- HTTP health endpoint (optional)
-- Process info (PID, memory, CPU, uptime)
-- Response times
-
-Returns the created app configuration with initial health check.`,
-    inputSchema: {
-      type: 'object',
-      properties: {
-        name: { type: 'string', description: 'Unique name for the app (e.g., "api-server", "web-app")' },
-        path: { type: 'string', description: 'Path to app directory (relative to /mnt/prod/ or absolute)' },
-        port: { type: 'number', minimum: 1, maximum: 65535, description: 'Port the app listens on' },
-        description: { type: 'string', description: 'Description of what the app does' },
-        healthEndpoint: { type: 'string', description: 'HTTP endpoint to check (e.g., "/health", "/api/health")' },
-        expectedResponseCode: { type: 'number', description: 'Expected HTTP status code (default: 200)' },
-        checkIntervalMs: { type: 'number', minimum: 5000, description: 'How often to check health in ms (default: 30000)' },
-        timeoutMs: { type: 'number', minimum: 1000, description: 'Health check timeout in ms (default: 5000)' },
-        tags: { type: 'array', items: { type: 'string' }, description: 'Tags for grouping/filtering apps' },
-        metadata: { type: 'object', description: 'Additional metadata' },
-        autoStart: { type: 'boolean', description: 'Start monitoring immediately (default: true)' }
-      },
-      required: ['name', 'path', 'port']
-    }
-  },
-  {
-    name: 'remove_monitored_app',
-    description: 'Remove an app from monitoring',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        appId: { type: 'string', description: 'ID of the app to remove' }
-      },
-      required: ['appId']
-    }
-  },
-  {
-    name: 'list_monitored_apps',
-    description: 'List all monitored applications with their current status',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        includeHealth: { type: 'boolean', description: 'Include last health check results (default: true)' },
-        tag: { type: 'string', description: 'Filter by tag' }
-      }
-    }
-  },
-  {
-    name: 'get_app_status',
-    description: 'Get detailed status for a specific app including process info and health history',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        appId: { type: 'string', description: 'ID of the app' },
-        appName: { type: 'string', description: 'Name of the app (alternative to appId)' },
-        historyLimit: { type: 'number', description: 'Number of history entries to include (default: 10)' }
-      }
-    }
-  },
-  {
-    name: 'check_app_health',
-    description: 'Perform an immediate health check on a specific app',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        appId: { type: 'string', description: 'ID of the app' },
-        appName: { type: 'string', description: 'Name of the app (alternative to appId)' }
-      }
-    }
-  },
-  {
-    name: 'check_all_apps_health',
-    description: 'Perform health checks on all monitored apps and return summary',
-    inputSchema: {
-      type: 'object',
-      properties: {}
-    }
-  },
-  {
-    name: 'get_app_monitor_stats',
-    description: 'Get overall app monitoring statistics',
-    inputSchema: {
-      type: 'object',
-      properties: {}
-    }
-  },
-  {
-    name: 'update_monitored_app',
-    description: 'Update configuration for a monitored app',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        appId: { type: 'string', description: 'ID of the app to update' },
-        updates: {
-          type: 'object',
-          description: 'Fields to update',
-          properties: {
-            name: { type: 'string' },
-            description: { type: 'string' },
-            healthEndpoint: { type: 'string' },
-            expectedResponseCode: { type: 'number' },
-            checkIntervalMs: { type: 'number', minimum: 5000 },
-            timeoutMs: { type: 'number', minimum: 1000 },
-            enabled: { type: 'boolean' },
-            tags: { type: 'array', items: { type: 'string' } },
-            metadata: { type: 'object' }
-          }
-        }
-      },
-      required: ['appId', 'updates']
-    }
-  },
-  {
-    name: 'set_app_monitoring_enabled',
-    description: 'Enable or disable monitoring for an app',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        appId: { type: 'string', description: 'ID of the app' },
-        enabled: { type: 'boolean', description: 'Whether to enable monitoring' }
-      },
-      required: ['appId', 'enabled']
-    }
-  },
-  {
-    name: 'get_offline_apps',
-    description: 'Get list of apps that are currently offline',
-    inputSchema: {
-      type: 'object',
-      properties: {}
-    }
-  },
-  {
-    name: 'get_degraded_apps',
-    description: 'Get list of apps that are in degraded state (slow response or partial failure)',
-    inputSchema: {
-      type: 'object',
-      properties: {}
-    }
-  },
-  {
-    name: 'scan_prod_apps',
-    description: 'Scan /mnt/prod/ directory for potential apps that can be monitored',
-    inputSchema: {
-      type: 'object',
-      properties: {}
-    }
-  },
-  {
-    name: 'get_app_logs',
-    description: 'Get recent logs for a monitored app (from PM2, journalctl, or log files)',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        appId: { type: 'string', description: 'ID of the app' },
-        appName: { type: 'string', description: 'Name of the app (alternative to appId)' },
-        lines: { type: 'number', minimum: 1, maximum: 500, description: 'Number of log lines to retrieve (default: 50)' }
-      }
-    }
-  },
-  {
-    name: 'get_app_status_history',
-    description: 'Get status history for an app to see uptime patterns',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        appId: { type: 'string', description: 'ID of the app' },
-        appName: { type: 'string', description: 'Name of the app (alternative to appId)' },
-        limit: { type: 'number', minimum: 1, maximum: 1000, description: 'Number of history entries (default: 100)' }
-      }
-    }
-  },
-
-  // ============================================================================
   // SESSION MANAGEMENT TOOLS
   // ============================================================================
   {
     name: 'register_session',
     description: `Register a Claude session working on a project.
 
-IMPORTANT: Call this at the START of working on a project to appear in the supervisor dashboard.
+IMPORTANT: Call this at the START of working on a project to be tracked by the supervisor.
 
 This explicitly registers your session for tracking. Without calling this, you won't show up in the agents list.
 
@@ -1303,214 +962,116 @@ This marks your session as disconnected and will be cleaned up after retention p
       required: ['agentId']
     }
   },
-
   // ============================================================================
-  // TASK MANAGEMENT TOOLS
+  // GITHUB ISSUE TOOLS (uses gh CLI - auto-detects current repository)
   // ============================================================================
   {
-    name: 'create_task',
-    description: `Create a new task (GitHub Issue) for a project.
+    name: 'create_github_issue',
+    description: `Create a GitHub issue in the current repository using the gh CLI.
 
-Use needsApproval: true for significant changes that require human approval before implementation.
+Automatically detects the repository from the current git context.
+Requires gh CLI to be installed and authenticated.
 
-Returns the created task with its GitHub issue number and URL.`,
+Returns the created issue URL and number.`,
     inputSchema: {
       type: 'object',
       properties: {
-        projectName: { type: 'string', description: 'Repository in "owner/repo" format. Auto-detects if not provided.' },
-        title: { type: 'string', description: 'Task title' },
-        description: { type: 'string', description: 'Detailed task description' },
-        priority: { type: 'string', enum: ['critical', 'high', 'medium', 'low'], description: 'Task priority (default: medium)' },
-        assignee: { type: 'string', description: 'GitHub username to assign (use "@me" for yourself)' },
-        labels: { type: 'array', items: { type: 'string' }, description: 'Additional labels (e.g., ["bug", "security"])' },
-        dueDate: { type: 'string', description: 'Due date or milestone' },
-        estimatedHours: { type: 'number', description: 'Estimated hours to complete' },
-        parentTaskId: { type: 'string', description: 'Parent task ID for subtasks' },
-        dependencies: { type: 'array', items: { type: 'string' }, description: 'Task IDs this task depends on' },
-        metadata: { type: 'object', description: 'Additional metadata' },
-        needsApproval: { type: 'boolean', description: 'Flag for significant changes requiring approval (adds needs-approval label)' }
+        title: { type: 'string', description: 'Issue title' },
+        body: { type: 'string', description: 'Issue body/description (supports markdown)' },
+        labels: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Labels to apply (e.g., ["bug", "enhancement"])'
+        },
+        assignees: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'GitHub usernames to assign'
+        },
+        milestone: { type: 'string', description: 'Milestone name or number' },
+        project: { type: 'string', description: 'Project name to add issue to' }
       },
       required: ['title']
     }
   },
   {
-    name: 'get_tasks',
-    description: `Get all tasks for a project with optional filtering.
+    name: 'list_github_issues',
+    description: `List GitHub issues in the current repository using the gh CLI.
 
-Filter by status, priority, assignee, or labels.`,
+Automatically detects the repository from the current git context.
+Requires gh CLI to be installed and authenticated.`,
     inputSchema: {
       type: 'object',
       properties: {
-        projectName: { type: 'string', description: 'Repository in "owner/repo" format. Auto-detects if not provided.' },
-        status: { type: 'string', enum: ['pending', 'in_progress', 'completed', 'blocked', 'cancelled'], description: 'Filter by status' },
-        priority: { type: 'string', enum: ['critical', 'high', 'medium', 'low'], description: 'Filter by priority' },
+        state: {
+          type: 'string',
+          enum: ['open', 'closed', 'all'],
+          description: 'Filter by state (default: open)'
+        },
+        labels: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Filter by labels'
+        },
         assignee: { type: 'string', description: 'Filter by assignee' },
-        labels: { type: 'array', items: { type: 'string' }, description: 'Filter by labels' }
+        limit: { type: 'number', description: 'Max issues to return (default: 30)' }
       }
     }
   },
   {
-    name: 'get_pending_tasks',
-    description: `Get all pending tasks for a project (excludes tasks with needs-approval label).
+    name: 'update_github_issue',
+    description: `Update a GitHub issue in the current repository using the gh CLI.
 
-These are tasks ready to work on.`,
+Automatically detects the repository from the current git context.
+Requires gh CLI to be installed and authenticated.`,
     inputSchema: {
       type: 'object',
       properties: {
-        projectName: { type: 'string', description: 'Repository in "owner/repo" format. Auto-detects if not provided.' }
-      }
-    }
-  },
-  {
-    name: 'get_approved_tasks',
-    description: `Get all approved tasks ready to work on for a project.
-
-Returns open tasks that do NOT have the 'needs-approval' label.
-These are tasks that either never needed approval or have been approved.
-
-Perfect for automated agents to find work to do.`,
-    inputSchema: {
-      type: 'object',
-      properties: {
-        projectName: { type: 'string', description: 'Repository in "owner/repo" format. Auto-detects if not provided.' }
-      }
-    }
-  },
-  {
-    name: 'get_task',
-    description: 'Get a specific task by ID (issue number)',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        projectName: { type: 'string', description: 'Repository in "owner/repo" format. Auto-detects if not provided.' },
-        taskId: { type: 'string', description: 'Task ID (GitHub issue number)' }
-      },
-      required: ['taskId']
-    }
-  },
-  {
-    name: 'update_task',
-    description: `Update a task with new information.
-
-Can update title, description, priority, status, assignee, labels, and add comments/commits.`,
-    inputSchema: {
-      type: 'object',
-      properties: {
-        projectName: { type: 'string', description: 'Repository in "owner/repo" format. Auto-detects if not provided.' },
-        taskId: { type: 'string', description: 'Task ID (GitHub issue number)' },
+        issue: { type: 'number', description: 'Issue number to update' },
         title: { type: 'string', description: 'New title' },
-        description: { type: 'string', description: 'New description' },
-        priority: { type: 'string', enum: ['critical', 'high', 'medium', 'low'], description: 'New priority' },
-        status: { type: 'string', enum: ['pending', 'in_progress', 'completed', 'blocked', 'cancelled'], description: 'New status' },
-        assignee: { type: 'string', description: 'New assignee' },
-        labels: { type: 'array', items: { type: 'string' }, description: 'New labels' },
-        comment: { type: 'string', description: 'Comment to add' },
-        commits: { type: 'array', items: { type: 'string' }, description: 'Commit SHAs to link' }
+        body: { type: 'string', description: 'New body' },
+        addLabels: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Labels to add'
+        },
+        removeLabels: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Labels to remove'
+        },
+        addAssignees: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Assignees to add'
+        },
+        state: {
+          type: 'string',
+          enum: ['open', 'closed'],
+          description: 'Set issue state'
+        }
       },
-      required: ['taskId']
+      required: ['issue']
     }
   },
   {
-    name: 'update_task_status',
-    description: 'Update the status of a task',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        projectName: { type: 'string', description: 'Repository in "owner/repo" format. Auto-detects if not provided.' },
-        taskId: { type: 'string', description: 'Task ID (GitHub issue number)' },
-        status: { type: 'string', enum: ['pending', 'in_progress', 'completed', 'blocked', 'cancelled'], description: 'New status' }
-      },
-      required: ['taskId', 'status']
-    }
-  },
-  {
-    name: 'add_task_comment',
-    description: `Add a comment to a task with optional commit links.
+    name: 'close_github_issue',
+    description: `Close a GitHub issue with an optional comment.
 
-Useful for documenting progress or linking related commits.`,
+Automatically detects the repository from the current git context.
+Requires gh CLI to be installed and authenticated.`,
     inputSchema: {
       type: 'object',
       properties: {
-        projectName: { type: 'string', description: 'Repository in "owner/repo" format. Auto-detects if not provided.' },
-        taskId: { type: 'string', description: 'Task ID (GitHub issue number)' },
-        comment: { type: 'string', description: 'Comment text' },
-        commits: { type: 'array', items: { type: 'string' }, description: 'Commit SHAs to link' }
+        issue: { type: 'number', description: 'Issue number to close' },
+        comment: { type: 'string', description: 'Optional closing comment' },
+        reason: {
+          type: 'string',
+          enum: ['completed', 'not_planned'],
+          description: 'Close reason (default: completed)'
+        }
       },
-      required: ['taskId']
-    }
-  },
-  {
-    name: 'link_commits',
-    description: `Link commits to a task by adding a comment with commit references.
-
-Helps track which commits are related to a task.`,
-    inputSchema: {
-      type: 'object',
-      properties: {
-        projectName: { type: 'string', description: 'Repository in "owner/repo" format. Auto-detects if not provided.' },
-        taskId: { type: 'string', description: 'Task ID (GitHub issue number)' },
-        commits: { type: 'array', items: { type: 'string' }, description: 'Commit SHAs to link' },
-        message: { type: 'string', description: 'Optional message to include' }
-      },
-      required: ['taskId', 'commits']
-    }
-  },
-  {
-    name: 'close_task_with_comment',
-    description: `Close a task with a resolution comment and optional commit links.
-
-IMPORTANT: Use this after completing work on a task to document what was done.`,
-    inputSchema: {
-      type: 'object',
-      properties: {
-        projectName: { type: 'string', description: 'Repository in "owner/repo" format. Auto-detects if not provided.' },
-        taskId: { type: 'string', description: 'Task ID (GitHub issue number)' },
-        resolution: { type: 'string', description: 'Resolution description (what was done to complete the task)' },
-        commits: { type: 'array', items: { type: 'string' }, description: 'Commit SHAs related to this task' }
-      },
-      required: ['taskId', 'resolution']
-    }
-  },
-  {
-    name: 'delete_task',
-    description: 'Delete a task (closes as "not planned")',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        projectName: { type: 'string', description: 'Repository in "owner/repo" format. Auto-detects if not provided.' },
-        taskId: { type: 'string', description: 'Task ID (GitHub issue number)' }
-      },
-      required: ['taskId']
-    }
-  },
-  {
-    name: 'list_projects',
-    description: 'List all projects (repositories) with task counts',
-    inputSchema: {
-      type: 'object',
-      properties: {}
-    }
-  },
-  {
-    name: 'get_project_stats',
-    description: 'Get task statistics for a project (total, by status, by priority, etc.)',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        projectName: { type: 'string', description: 'Repository in "owner/repo" format. Auto-detects if not provided.' }
-      }
-    }
-  },
-  {
-    name: 'search_tasks',
-    description: 'Search tasks across projects using GitHub search syntax',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        query: { type: 'string', description: 'Search query' },
-        projectName: { type: 'string', description: 'Optional: limit search to specific repository' }
-      },
-      required: ['query']
+      required: ['issue']
     }
   }
 ];
@@ -1518,8 +1079,8 @@ IMPORTANT: Use this after completing work on a task to document what was done.`,
 // Create and configure MCP server
 const server = new Server(
   {
-    name: 'agent-supervisor',
-    version: '1.1.1'
+    name: 'manager-protocol',
+    version: '1.3.1'
   },
   {
     capabilities: {
@@ -1561,18 +1122,6 @@ server.setRequestHandler(ListResourcesRequestSchema, async () => ({
       description: 'Current audit and approval statistics',
       mimeType: 'application/json'
     },
-    {
-      uri: 'supervisor://apps',
-      name: 'Monitored Applications',
-      description: 'All monitored production applications with their current status',
-      mimeType: 'application/json'
-    },
-    {
-      uri: 'supervisor://apps/stats',
-      name: 'App Monitor Statistics',
-      description: 'Overall app monitoring statistics',
-      mimeType: 'application/json'
-    }
   ]
 }));
 
@@ -1630,30 +1179,6 @@ server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
         }]
       };
 
-    case 'supervisor://apps': {
-      const apps = supervisor.getAllMonitoredApps();
-      const appsWithHealth = apps.map(app => ({
-        ...app,
-        currentStatus: supervisor.getLastAppHealthCheck(app.id)
-      }));
-      return {
-        contents: [{
-          uri,
-          mimeType: 'application/json',
-          text: JSON.stringify(appsWithHealth, null, 2)
-        }]
-      };
-    }
-
-    case 'supervisor://apps/stats':
-      return {
-        contents: [{
-          uri,
-          mimeType: 'application/json',
-          text: JSON.stringify(supervisor.getAppMonitorStats(), null, 2)
-        }]
-      };
-
     default:
       throw new Error(`Unknown resource: ${uri}`);
   }
@@ -1688,8 +1213,120 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
 
       case 'require_human_approval': {
         const validated = RequireHumanApprovalArgsSchema.parse(args);
-        const result = await supervisor.requireHumanApproval(validated);
-        return resp({ requestId: result.requestId, status: result.status, priority: result.priority });
+
+        // Build approval message
+        const priorityLabel = validated.priority ? `[${validated.priority.toUpperCase()}] ` : '';
+        const riskLabel = validated.riskScore !== undefined ? `\nRisk Score: ${validated.riskScore}/100` : '';
+        const detailsSection = validated.details ? `\n\nDetails:\n${validated.details}` : '';
+
+        const message = `${priorityLabel}Approval Required
+
+${validated.reason}${riskLabel}${detailsSection}`;
+
+        try {
+          // Use MCP elicitation to prompt user directly
+          const elicitResult = await server.elicitInput({
+            mode: 'form',
+            message,
+            requestedSchema: {
+              type: 'object',
+              properties: {
+                approved: {
+                  type: 'boolean',
+                  title: 'Approve this action?',
+                  description: 'Check to approve, uncheck to deny'
+                },
+                comments: {
+                  type: 'string',
+                  title: 'Comments (optional)',
+                  description: 'Add any notes about your decision'
+                }
+              },
+              required: ['approved']
+            }
+          });
+
+          // Log the approval decision
+          const approved = elicitResult.action === 'accept' && elicitResult.content?.approved === true;
+          const comments = elicitResult.content?.comments || '';
+
+          await supervisor.logEvent({
+            action: `Human approval ${approved ? 'granted' : 'denied'}: ${validated.reason}`,
+            eventType: approved ? 'approval_granted' : 'approval_denied',
+            outcome: approved ? 'success' : 'failure',
+            metadata: {
+              reason: validated.reason,
+              priority: validated.priority,
+              riskScore: validated.riskScore,
+              comments,
+              elicitAction: elicitResult.action
+            }
+          });
+
+          return resp({
+            approved,
+            action: elicitResult.action,
+            comments,
+            decision: approved ? 'approved' : 'denied'
+          });
+        } catch (elicitError: any) {
+          // Elicitation not supported - fall back to GitHub issue
+          const priorityInfo = validated.priority ? `\n**Priority:** ${validated.priority.toUpperCase()}` : '';
+          const riskInfo = validated.riskScore !== undefined ? `\n**Risk Score:** ${validated.riskScore}/100` : '';
+          const detailsInfo = validated.details ? `\n\n**Details:**\n${validated.details}` : '';
+
+          const issueBody = `## Approval Required
+
+${validated.reason}${priorityInfo}${riskInfo}${detailsInfo}
+
+---
+*This approval request was created automatically because MCP elicitation is not available.*
+*Add the \`approved\` label to approve, or close as "not planned" to deny.*`;
+
+          const cmdParts = [
+            'gh', 'issue', 'create',
+            '--title', JSON.stringify(`[Approval Required] ${validated.reason.slice(0, 60)}`),
+            '--body', JSON.stringify(issueBody),
+            '--label', 'needs-approval'
+          ];
+
+          try {
+            const { stdout } = await execAsync(cmdParts.join(' '));
+            const url = stdout.trim();
+            const issueNumber = url.match(/\/issues\/(\d+)/)?.[1];
+
+            await supervisor.logEvent({
+              action: `Approval request created as GitHub issue: ${validated.reason}`,
+              eventType: 'approval_requested',
+              outcome: 'pending',
+              metadata: {
+                reason: validated.reason,
+                priority: validated.priority,
+                riskScore: validated.riskScore,
+                issueUrl: url,
+                issueNumber,
+                fallbackReason: elicitError.message
+              }
+            });
+
+            return resp({
+              approved: false,
+              pending: true,
+              issueUrl: url,
+              issueNumber: issueNumber ? parseInt(issueNumber) : null,
+              note: 'Elicitation not available - GitHub issue created for approval'
+            });
+          } catch (ghError: any) {
+            // GitHub CLI also failed - fall back to in-memory
+            const result = await supervisor.requireHumanApproval(validated);
+            return resp({
+              requestId: result.requestId,
+              status: result.status,
+              priority: result.priority,
+              note: 'Elicitation and GitHub unavailable - in-memory approval request created'
+            });
+          }
+        }
       }
 
       case 'log_event': {
@@ -1698,38 +1335,50 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
         return resp({ eventId: result.eventId, logged: true });
       }
 
-      // Approval management
+      // Approval management (in-memory - GitHub integration removed)
       case 'check_approval_status': {
-        const repo = typeof args?.repo === 'string' ? args.repo : undefined;
-        const pending = await supervisor.getPendingApprovals(repo);
-        const request = pending.find((r: any) => r.requestId === args?.requestId || r.issueNumber === args?.issueNumber);
-        if (!request) return resp({ status: 'not_found' });
-        return resp({ status: request.status, reason: request.reason, priority: request.priority });
+        const requestId = typeof args?.requestId === 'string' ? args.requestId : '';
+        if (!requestId) return resp({ error: 'requestId is required' });
+        const isApproved = await supervisor.isApproved(requestId);
+        const pending = await supervisor.getPendingApprovals();
+        const request = pending.find((r: any) => r.requestId === requestId);
+        if (!request && !isApproved) return resp({ status: 'not_found' });
+        return resp({
+          status: isApproved ? 'approved' : (request?.status || 'unknown'),
+          reason: request?.reason,
+          priority: request?.priority
+        });
       }
 
       case 'list_pending_approvals': {
-        const repo = typeof args?.repo === 'string' ? args.repo : undefined;
-        const allApprovals = await supervisor.getPendingApprovals(repo);
-        const result = limitResults(allApprovals, DEFAULT_RESPONSE_LIMIT);
+        const allApprovals = await supervisor.getPendingApprovals();
+        // Filter by priority and minRiskScore if provided
+        let filtered = allApprovals;
+        if (args?.priority) {
+          filtered = filtered.filter((a: any) => a.priority === args.priority);
+        }
+        const minRiskScore = typeof args?.minRiskScore === 'number' ? args.minRiskScore : undefined;
+        if (minRiskScore !== undefined) {
+          filtered = filtered.filter((a: any) => (a.riskScore || 0) >= minRiskScore);
+        }
+        const result = limitResults(filtered, DEFAULT_RESPONSE_LIMIT);
         return resp({
           count: result.items.length,
           total: result.total,
-          approvals: result.items.map((a: any) => ({ id: a.requestId, reason: a.reason, priority: a.priority })),
+          approvals: result.items.map((a: any) => ({ id: a.requestId, reason: a.reason, priority: a.priority, riskScore: a.riskScore })),
           ...(result.truncated && { warning: result.warning, pagination: result.pagination })
         });
       }
 
       case 'approve_request': {
         const validated = ApproveRequestArgsSchema.parse(args);
-        const repo = typeof args?.repo === 'string' ? args.repo : undefined;
-        await supervisor.approveRequest(validated.requestId, validated.approverId, validated.comments, repo);
+        await supervisor.approveRequest(validated.requestId, validated.approverId, validated.comments);
         return resp({ approved: true, requestId: validated.requestId });
       }
 
       case 'deny_request': {
         const validated = DenyRequestArgsSchema.parse(args);
-        const repo = typeof args?.repo === 'string' ? args.repo : undefined;
-        await supervisor.denyRequest(validated.requestId, validated.denierId, validated.reason, repo);
+        await supervisor.denyRequest(validated.requestId, validated.denierId, validated.reason);
         return resp({ denied: true, requestId: validated.requestId });
       }
 
@@ -2000,18 +1649,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
       case 'health_check': {
         const config = supervisor.getConfig();
         const stats = supervisor.getAuditStats();
-
-        // Try to get pending approvals, but don't fail if no repo is available
-        let pendingApprovalsCount = 0;
-        try {
-          const repo = typeof args?.repo === 'string' ? args.repo : undefined;
-          if (repo) {
-            const pendingApprovals = await supervisor.getPendingApprovals(repo);
-            pendingApprovalsCount = pendingApprovals.length;
-          }
-        } catch {
-          // No repo available or error - that's fine for health check
-        }
+        const pendingApprovals = await supervisor.getPendingApprovals();
 
         return {
           content: [{
@@ -2022,8 +1660,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
               environment: config.environment,
               rulesLoaded: supervisor.getRules().length,
               auditEventsLogged: stats.total,
-              pendingApprovals: pendingApprovalsCount,
-              features: config.features
+              pendingApprovals: pendingApprovals.length,
+              features: config.features,
+              note: 'GitHub integration removed - use GitHub MCP for GitHub functionality'
             }, null, 2)
           }]
         };
@@ -2203,202 +1842,6 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
         };
       }
 
-      // App monitoring tools
-      case 'add_monitored_app': {
-        const validated = AddMonitoredAppArgsSchema.parse(args);
-        const result = await supervisor.addMonitoredApp(validated);
-        const healthCheck = supervisor.getLastAppHealthCheck(result.id);
-        return {
-          content: [{
-            type: 'text',
-            text: JSON.stringify({ app: result, initialHealth: healthCheck }, null, 2)
-          }]
-        };
-      }
-
-      case 'remove_monitored_app': {
-        const validated = RemoveMonitoredAppArgsSchema.parse(args);
-        const removed = await supervisor.removeMonitoredApp(validated.appId);
-        return { content: [{ type: 'text', text: JSON.stringify({ success: removed }) }] };
-      }
-
-      case 'list_monitored_apps': {
-        let apps = supervisor.getAllMonitoredApps();
-        if (args?.tag && typeof args.tag === 'string') {
-          apps = supervisor.findAppsByTag(args.tag);
-        }
-
-        const includeHealth = args?.includeHealth !== false;
-        const limited = limitResults(apps, DEFAULT_RESPONSE_LIMIT);
-        const mappedApps = limited.items.map((app: { id: string; [key: string]: unknown }) => {
-          const base = { ...app };
-          if (includeHealth) {
-            return {
-              ...base,
-              lastHealth: supervisor.getLastAppHealthCheck(app.id)
-            };
-          }
-          return base;
-        });
-
-        return resp({
-          count: mappedApps.length,
-          total: limited.total,
-          apps: mappedApps,
-          ...(limited.truncated && { warning: limited.warning, pagination: limited.pagination })
-        });
-      }
-
-      case 'get_app_status': {
-        const validated = GetAppStatusArgsSchema.parse(args);
-        let app = validated.appId
-          ? supervisor.getMonitoredApp(validated.appId)
-          : validated.appName
-            ? supervisor.getMonitoredAppByName(validated.appName)
-            : undefined;
-
-        if (!app) {
-          return {
-            content: [{ type: 'text', text: JSON.stringify({ error: 'App not found' }) }],
-            isError: true
-          };
-        }
-
-        const healthCheck = supervisor.getLastAppHealthCheck(app.id);
-        const history = supervisor.getAppStatusHistory(app.id, validated.historyLimit || 10);
-
-        return {
-          content: [{
-            type: 'text',
-            text: JSON.stringify({
-              app,
-              currentHealth: healthCheck,
-              recentHistory: history
-            }, null, 2)
-          }]
-        };
-      }
-
-      case 'check_app_health': {
-        const validated = CheckAppHealthArgsSchema.parse(args);
-        let appId = validated.appId;
-        if (!appId && validated.appName) {
-          const app = supervisor.getMonitoredAppByName(validated.appName);
-          if (app) appId = app.id;
-        }
-
-        if (!appId) {
-          return {
-            content: [{ type: 'text', text: JSON.stringify({ error: 'App not found' }) }],
-            isError: true
-          };
-        }
-
-        const result = await supervisor.checkAppHealth(appId);
-        return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
-      }
-
-      case 'check_all_apps_health': {
-        const results = await supervisor.checkAllAppsHealth();
-        const stats = supervisor.getAppMonitorStats();
-        return {
-          content: [{
-            type: 'text',
-            text: JSON.stringify({ stats, results }, null, 2)
-          }]
-        };
-      }
-
-      case 'get_app_monitor_stats': {
-        const stats = supervisor.getAppMonitorStats();
-        return { content: [{ type: 'text', text: JSON.stringify(stats, null, 2) }] };
-      }
-
-      case 'update_monitored_app': {
-        const validated = UpdateMonitoredAppArgsSchema.parse(args);
-        const result = await supervisor.updateMonitoredApp(
-          validated.appId,
-          validated.updates
-        );
-        if (!result) {
-          return {
-            content: [{ type: 'text', text: JSON.stringify({ error: 'App not found' }) }],
-            isError: true
-          };
-        }
-        return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
-      }
-
-      case 'set_app_monitoring_enabled': {
-        const validated = SetAppMonitoringEnabledArgsSchema.parse(args);
-        const success = supervisor.setAppMonitoringEnabled(
-          validated.appId,
-          validated.enabled
-        );
-        return { content: [{ type: 'text', text: JSON.stringify({ success }) }] };
-      }
-
-      case 'get_offline_apps': {
-        const offlineApps = supervisor.getOfflineApps();
-        const result = offlineApps.map(app => ({
-          ...app,
-          lastHealth: supervisor.getLastAppHealthCheck(app.id)
-        }));
-        return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
-      }
-
-      case 'get_degraded_apps': {
-        const degradedApps = supervisor.getDegradedApps();
-        const result = degradedApps.map(app => ({
-          ...app,
-          lastHealth: supervisor.getLastAppHealthCheck(app.id)
-        }));
-        return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
-      }
-
-      case 'scan_prod_apps': {
-        const potentialApps = await supervisor.scanForApps();
-        return { content: [{ type: 'text', text: JSON.stringify(potentialApps, null, 2) }] };
-      }
-
-      case 'get_app_logs': {
-        const validated = GetAppLogsArgsSchema.parse(args);
-        let appId = validated.appId;
-        if (!appId && validated.appName) {
-          const app = supervisor.getMonitoredAppByName(validated.appName);
-          if (app) appId = app.id;
-        }
-
-        if (!appId) {
-          return {
-            content: [{ type: 'text', text: JSON.stringify({ error: 'App not found' }) }],
-            isError: true
-          };
-        }
-
-        const logs = await supervisor.getAppLogs(appId, validated.lines || 50);
-        return { content: [{ type: 'text', text: JSON.stringify(logs, null, 2) }] };
-      }
-
-      case 'get_app_status_history': {
-        const validated = GetAppStatusHistoryArgsSchema.parse(args);
-        let appId = validated.appId;
-        if (!appId && validated.appName) {
-          const app = supervisor.getMonitoredAppByName(validated.appName);
-          if (app) appId = app.id;
-        }
-
-        if (!appId) {
-          return {
-            content: [{ type: 'text', text: JSON.stringify({ error: 'App not found' }) }],
-            isError: true
-          };
-        }
-
-        const history = supervisor.getAppStatusHistory(appId, validated.limit || 100);
-        return { content: [{ type: 'text', text: JSON.stringify(history, null, 2) }] };
-      }
-
       // Session management tools
       case 'register_session': {
         const validated = z.object({
@@ -2441,161 +1884,112 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
         };
       }
 
-      // Task management tools
-      case 'create_task': {
-        const validated = CreateTaskArgsSchema.parse(args);
-        const task = await taskManager.createTask(validated);
-        return resp(slimTask(task));
+      // GitHub Issue tools (using gh CLI)
+      case 'create_github_issue': {
+        const validated = z.object({
+          title: z.string(),
+          body: z.string().optional(),
+          labels: z.array(z.string()).optional(),
+          assignees: z.array(z.string()).optional(),
+          milestone: z.string().optional(),
+          project: z.string().optional()
+        }).parse(args);
+
+        const cmdParts = ['gh', 'issue', 'create', '--title', JSON.stringify(validated.title)];
+        if (validated.body) cmdParts.push('--body', JSON.stringify(validated.body));
+        if (validated.labels?.length) cmdParts.push('--label', validated.labels.join(','));
+        if (validated.assignees?.length) cmdParts.push('--assignee', validated.assignees.join(','));
+        if (validated.milestone) cmdParts.push('--milestone', validated.milestone);
+        if (validated.project) cmdParts.push('--project', validated.project);
+
+        try {
+          const { stdout } = await execAsync(cmdParts.join(' '));
+          const url = stdout.trim();
+          const issueNumber = url.match(/\/issues\/(\d+)/)?.[1];
+          return resp({ success: true, url, issueNumber: issueNumber ? parseInt(issueNumber) : null });
+        } catch (err: any) {
+          return resp({ success: false, error: err.stderr || err.message });
+        }
       }
 
-      case 'get_tasks': {
-        const validated = GetTasksArgsSchema.parse(args || {});
-        const allTasks = await taskManager.getTasksByProject(
-          validated.projectName,
-          {
-            status: validated.status,
-            priority: validated.priority,
-            assignee: validated.assignee,
-            labels: validated.labels
+      case 'list_github_issues': {
+        const validated = z.object({
+          state: z.enum(['open', 'closed', 'all']).optional(),
+          labels: z.array(z.string()).optional(),
+          assignee: z.string().optional(),
+          limit: z.number().optional()
+        }).parse(args || {});
+
+        const cmdParts = ['gh', 'issue', 'list', '--json', 'number,title,state,labels,assignees,url'];
+        if (validated.state) cmdParts.push('--state', validated.state);
+        if (validated.labels?.length) cmdParts.push('--label', validated.labels.join(','));
+        if (validated.assignee) cmdParts.push('--assignee', validated.assignee);
+        cmdParts.push('--limit', String(validated.limit || 30));
+
+        try {
+          const { stdout } = await execAsync(cmdParts.join(' '));
+          const issues = JSON.parse(stdout);
+          return resp({ success: true, issues, count: issues.length });
+        } catch (err: any) {
+          return resp({ success: false, error: err.stderr || err.message });
+        }
+      }
+
+      case 'update_github_issue': {
+        const validated = z.object({
+          issue: z.number(),
+          title: z.string().optional(),
+          body: z.string().optional(),
+          addLabels: z.array(z.string()).optional(),
+          removeLabels: z.array(z.string()).optional(),
+          addAssignees: z.array(z.string()).optional(),
+          state: z.enum(['open', 'closed']).optional()
+        }).parse(args);
+
+        const cmdParts = ['gh', 'issue', 'edit', String(validated.issue)];
+        if (validated.title) cmdParts.push('--title', JSON.stringify(validated.title));
+        if (validated.body) cmdParts.push('--body', JSON.stringify(validated.body));
+        if (validated.addLabels?.length) cmdParts.push('--add-label', validated.addLabels.join(','));
+        if (validated.removeLabels?.length) cmdParts.push('--remove-label', validated.removeLabels.join(','));
+        if (validated.addAssignees?.length) cmdParts.push('--add-assignee', validated.addAssignees.join(','));
+
+        try {
+          await execAsync(cmdParts.join(' '));
+
+          // Handle state change separately if needed
+          if (validated.state === 'closed') {
+            await execAsync(`gh issue close ${validated.issue}`);
+          } else if (validated.state === 'open') {
+            await execAsync(`gh issue reopen ${validated.issue}`);
           }
-        );
-        const result = limitResults(allTasks, DEFAULT_RESPONSE_LIMIT);
-        return resp({
-          count: result.items.length,
-          total: result.total,
-          tasks: result.items.map(slimTask),
-          ...(result.truncated && { warning: result.warning, pagination: result.pagination })
-        });
-      }
 
-      case 'get_pending_tasks': {
-        const projectName = typeof args?.projectName === 'string' ? args.projectName : undefined;
-        const tasks = await taskManager.getPendingTasks(projectName);
-        const approvedTasks = tasks.filter(task => !task.labels?.includes('needs-approval'));
-        const result = limitResults(approvedTasks, DEFAULT_RESPONSE_LIMIT);
-        return resp({
-          count: result.items.length,
-          total: result.total,
-          tasks: result.items.map(slimTask),
-          ...(result.truncated && { warning: result.warning, pagination: result.pagination })
-        });
-      }
-
-      case 'get_approved_tasks': {
-        const projectName = typeof args?.projectName === 'string' ? args.projectName : undefined;
-        const allTasks = await taskManager.getTasksByProject(projectName);
-        const approvedTasks = allTasks.filter(task =>
-          (task.status === 'pending' || task.status === 'in_progress') &&
-          task.labels?.includes('approved')
-        );
-        const result = limitResults(approvedTasks, DEFAULT_RESPONSE_LIMIT);
-        return resp({
-          count: result.items.length,
-          total: result.total,
-          tasks: result.items.map(slimTask),
-          ...(result.truncated && { warning: result.warning, pagination: result.pagination })
-        });
-      }
-
-      case 'get_task': {
-        const validated = GetTaskArgsSchema.parse(args);
-        const task = await taskManager.getTask(validated.projectName, validated.taskId);
-        if (!task) {
-          return { content: [{ type: 'text', text: json({ error: 'Task not found' }) }], isError: true };
+          return resp({ success: true, issue: validated.issue });
+        } catch (err: any) {
+          return resp({ success: false, error: err.stderr || err.message });
         }
-        return resp(slimTask(task));
       }
 
-      case 'update_task': {
-        const validated = UpdateTaskArgsSchema.parse(args);
-        const task = await taskManager.updateTask(
-          validated.projectName,
-          validated.taskId,
-          {
-            title: validated.title,
-            description: validated.description,
-            priority: validated.priority,
-            status: validated.status,
-            assignee: validated.assignee,
-            labels: validated.labels,
-            comment: validated.comment,
-            commits: validated.commits
+      case 'close_github_issue': {
+        const validated = z.object({
+          issue: z.number(),
+          comment: z.string().optional(),
+          reason: z.enum(['completed', 'not_planned']).optional()
+        }).parse(args);
+
+        try {
+          // Add comment first if provided
+          if (validated.comment) {
+            await execAsync(`gh issue comment ${validated.issue} --body ${JSON.stringify(validated.comment)}`);
           }
-        );
-        if (!task) {
-          return { content: [{ type: 'text', text: json({ error: 'Update failed' }) }], isError: true };
+
+          // Close the issue
+          const reasonFlag = validated.reason === 'not_planned' ? '--reason "not planned"' : '';
+          await execAsync(`gh issue close ${validated.issue} ${reasonFlag}`.trim());
+
+          return resp({ success: true, issue: validated.issue, closed: true });
+        } catch (err: any) {
+          return resp({ success: false, error: err.stderr || err.message });
         }
-        return resp(slimTask(task));
-      }
-
-      case 'update_task_status': {
-        const validated = UpdateTaskStatusArgsSchema.parse(args);
-        const task = await taskManager.updateTaskStatus(validated.projectName, validated.taskId, validated.status);
-        if (!task) {
-          return { content: [{ type: 'text', text: json({ error: 'Status update failed' }) }], isError: true };
-        }
-        return resp(slimTask(task));
-      }
-
-      case 'add_task_comment': {
-        const validated = AddTaskCommentArgsSchema.parse(args);
-        const success = await taskManager.addComment(validated.projectName, validated.taskId, validated.comment, validated.commits);
-        return resp({ success });
-      }
-
-      case 'link_commits': {
-        const validated = LinkCommitsArgsSchema.parse(args);
-        const success = await taskManager.linkCommits(validated.projectName, validated.taskId, validated.commits, validated.message);
-        return resp({ success });
-      }
-
-      case 'close_task_with_comment': {
-        const validated = CloseTaskWithCommentArgsSchema.parse(args);
-        const task = await taskManager.closeWithComment(validated.projectName, validated.taskId, validated.resolution, validated.commits);
-        if (!task) {
-          return { content: [{ type: 'text', text: json({ error: 'Close failed' }) }], isError: true };
-        }
-        return resp(slimTask(task));
-      }
-
-      case 'delete_task': {
-        const projectName = typeof args?.projectName === 'string' ? args.projectName : undefined;
-        const taskId = typeof args?.taskId === 'string' ? args.taskId : '';
-        if (!taskId) {
-          return { content: [{ type: 'text', text: json({ error: 'taskId required' }) }], isError: true };
-        }
-        const success = await taskManager.deleteTask(projectName, taskId);
-        return resp({ success });
-      }
-
-      case 'list_projects': {
-        const projects = await taskManager.listProjects();
-        return resp(projects);
-      }
-
-      case 'get_project_stats': {
-        const projectName = typeof args?.projectName === 'string' ? args.projectName : undefined;
-        const stats = await taskManager.getProjectStats(projectName);
-        if (!stats) {
-          return {
-            content: [{ type: 'text', text: JSON.stringify({ error: 'Failed to get project stats' }) }],
-            isError: true
-          };
-        }
-        return { content: [{ type: 'text', text: JSON.stringify(stats, null, 2) }] };
-      }
-
-      case 'search_tasks': {
-        const validated = SearchTasksArgsSchema.parse(args);
-        const allTasks = await taskManager.searchTasks(validated.query, validated.projectName);
-        const result = limitResults(allTasks, DEFAULT_RESPONSE_LIMIT);
-        return resp({
-          query: validated.query,
-          count: result.items.length,
-          total: result.total,
-          tasks: result.items.map(slimTask),
-          ...(result.truncated && { warning: result.warning, pagination: result.pagination })
-        });
       }
 
       default:

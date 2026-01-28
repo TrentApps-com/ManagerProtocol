@@ -820,7 +820,7 @@ export class AuditLogger {
   }
 
   /**
-   * Reload events from database (for dashboard refresh)
+   * Reload events from database
    */
   async reload(): Promise<void> {
     if (this.db) {

@@ -8,7 +8,7 @@
  * - Comprehensive audit logging
  * - Rate limiting and abuse prevention
  *
- * @module @managerprotocol/agent-supervisor
+ * @module @trentapps/manager-protocol
  */
 
 // Core types
@@ -22,12 +22,7 @@ export {
   rateLimiter,
   AuditLogger,
   auditLogger,
-  type AuditLoggerOptions,
-  GitHubApprovalManager,
-  type GitHubApprovalOptions,
-  AppMonitor,
-  appMonitor,
-  type AppMonitorOptions
+  type AuditLoggerOptions
 } from './engine/index.js';
 
 // Built-in rules

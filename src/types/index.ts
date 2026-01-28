@@ -400,7 +400,7 @@ export type RateLimitState = z.infer<typeof RateLimitStateSchema>;
 // ============================================================================
 
 export const SupervisorConfigSchema = z.object({
-  version: z.string().default('1.1.1'),
+  version: z.string().default('1.3.1'),
   name: z.string().default('Agent Supervisor'),
   environment: z.enum(['development', 'staging', 'production']).default('development'),
 
@@ -438,82 +438,6 @@ export const SupervisorConfigSchema = z.object({
 });
 
 export type SupervisorConfig = z.infer<typeof SupervisorConfigSchema>;
-
-// ============================================================================
-// APP MONITORING TYPES
-// ============================================================================
-
-export const AppStatusSchema = z.enum([
-  'online',
-  'offline',
-  'degraded',
-  'unknown',
-  'starting',
-  'stopping'
-]);
-
-export type AppStatus = z.infer<typeof AppStatusSchema>;
-
-export const MonitoredAppSchema = z.object({
-  id: z.string(),
-  name: z.string().min(1),
-  path: z.string().min(1), // Path in /mnt/prod/
-  port: z.number().min(1).max(65535),
-  description: z.string().optional(),
-  healthEndpoint: z.string().optional(), // e.g., '/health' or '/api/health'
-  expectedResponseCode: z.number().default(200),
-  checkIntervalMs: z.number().min(5000).default(30000), // Default 30 seconds
-  timeoutMs: z.number().min(1000).default(5000), // Default 5 seconds
-  enabled: z.boolean().default(true),
-  tags: z.array(z.string()).optional(),
-  metadata: z.record(z.unknown()).optional(),
-  createdAt: z.string().datetime(),
-  updatedAt: z.string().datetime().optional()
-});
-
-export type MonitoredApp = z.infer<typeof MonitoredAppSchema>;
-
-export const AppHealthCheckResultSchema = z.object({
-  appId: z.string(),
-  appName: z.string(),
-  status: AppStatusSchema,
-  port: z.number(),
-  path: z.string(),
-  responseTimeMs: z.number().optional(),
-  httpStatusCode: z.number().optional(),
-  errorMessage: z.string().optional(),
-  checkedAt: z.string().datetime(),
-  processInfo: z.object({
-    pid: z.number().optional(),
-    memoryUsageMb: z.number().optional(),
-    cpuPercent: z.number().optional(),
-    uptime: z.string().optional()
-  }).optional()
-});
-
-export type AppHealthCheckResult = z.infer<typeof AppHealthCheckResultSchema>;
-
-export const AppStatusHistoryEntrySchema = z.object({
-  appId: z.string(),
-  status: AppStatusSchema,
-  timestamp: z.string().datetime(),
-  responseTimeMs: z.number().optional(),
-  errorMessage: z.string().optional()
-});
-
-export type AppStatusHistoryEntry = z.infer<typeof AppStatusHistoryEntrySchema>;
-
-export const AppMonitorStatsSchema = z.object({
-  totalApps: z.number(),
-  onlineApps: z.number(),
-  offlineApps: z.number(),
-  degradedApps: z.number(),
-  unknownApps: z.number(),
-  averageResponseTimeMs: z.number().optional(),
-  lastFullCheckAt: z.string().datetime().optional()
-});
-
-export type AppMonitorStats = z.infer<typeof AppMonitorStatsSchema>;
 
 // ============================================================================
 // PROJECT TASK TYPES
