@@ -296,7 +296,8 @@ Returns:
 
 Use when an action is high-risk, outside normal parameters, or governance rules require human-in-the-loop.
 
-Returns approval request ID that can be checked later.`,
+This tool prompts the user directly for approval via MCP elicitation.
+Returns the approval decision immediately (approved/denied).`,
     inputSchema: {
       type: 'object',
       properties: {
@@ -1212,8 +1213,121 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
 
       case 'require_human_approval': {
         const validated = RequireHumanApprovalArgsSchema.parse(args);
-        const result = await supervisor.requireHumanApproval(validated);
-        return resp({ requestId: result.requestId, status: result.status, priority: result.priority });
+
+        // Build approval message
+        const priorityLabel = validated.priority ? `[${validated.priority.toUpperCase()}] ` : '';
+        const riskLabel = validated.riskScore !== undefined ? `\nRisk Score: ${validated.riskScore}/100` : '';
+        const detailsSection = validated.details ? `\n\nDetails:\n${validated.details}` : '';
+
+        const message = `${priorityLabel}Approval Required
+
+${validated.reason}${riskLabel}${detailsSection}`;
+
+        try {
+          // Use MCP elicitation to prompt user directly
+          const elicitResult = await server.elicitInput({
+            mode: 'form',
+            message,
+            requestedSchema: {
+              type: 'object',
+              properties: {
+                approved: {
+                  type: 'boolean',
+                  title: 'Approve this action?',
+                  description: 'Check to approve, uncheck to deny'
+                },
+                comments: {
+                  type: 'string',
+                  title: 'Comments (optional)',
+                  description: 'Add any notes about your decision'
+                }
+              },
+              required: ['approved']
+            }
+          });
+
+          // Log the approval decision
+          const approved = elicitResult.action === 'accept' && elicitResult.content?.approved === true;
+          const comments = elicitResult.content?.comments || '';
+
+          await supervisor.logEvent({
+            action: `Human approval ${approved ? 'granted' : 'denied'}: ${validated.reason}`,
+            eventType: approved ? 'approval_granted' : 'approval_denied',
+            outcome: approved ? 'success' : 'failure',
+            metadata: {
+              reason: validated.reason,
+              priority: validated.priority,
+              riskScore: validated.riskScore,
+              comments,
+              elicitAction: elicitResult.action
+            }
+          });
+
+          return resp({
+            approved,
+            action: elicitResult.action,
+            comments,
+            decision: approved ? 'approved' : 'denied'
+          });
+        } catch (elicitError: any) {
+          // Elicitation not supported - fall back to GitHub issue
+          const priorityLabel = validated.priority || 'normal';
+          const riskInfo = validated.riskScore !== undefined ? `\n\n**Risk Score:** ${validated.riskScore}/100` : '';
+          const detailsInfo = validated.details ? `\n\n**Details:**\n${validated.details}` : '';
+
+          const issueBody = `## Approval Required
+
+${validated.reason}${riskInfo}${detailsInfo}
+
+---
+*This approval request was created automatically because MCP elicitation is not available.*
+*Add the \`approved\` label to approve, or close as "not planned" to deny.*`;
+
+          const labels = ['needs-approval', priorityLabel];
+          const cmdParts = [
+            'gh', 'issue', 'create',
+            '--title', JSON.stringify(`[Approval Required] ${validated.reason.slice(0, 60)}`),
+            '--body', JSON.stringify(issueBody),
+            '--label', labels.join(',')
+          ];
+
+          try {
+            const { stdout } = await execAsync(cmdParts.join(' '));
+            const url = stdout.trim();
+            const issueNumber = url.match(/\/issues\/(\d+)/)?.[1];
+
+            await supervisor.logEvent({
+              action: `Approval request created as GitHub issue: ${validated.reason}`,
+              eventType: 'approval_requested',
+              outcome: 'pending',
+              metadata: {
+                reason: validated.reason,
+                priority: validated.priority,
+                riskScore: validated.riskScore,
+                issueUrl: url,
+                issueNumber,
+                fallbackReason: elicitError.message
+              }
+            });
+
+            return resp({
+              approved: false,
+              pending: true,
+              issueUrl: url,
+              issueNumber: issueNumber ? parseInt(issueNumber) : null,
+              note: 'Elicitation not available - GitHub issue created for approval'
+            });
+          } catch (ghError: any) {
+            // GitHub CLI also failed - fall back to in-memory
+            const result = await supervisor.requireHumanApproval(validated);
+            return resp({
+              requestId: result.requestId,
+              status: result.status,
+              priority: result.priority,
+              note: 'Elicitation and GitHub unavailable - in-memory approval request created'
+            });
+          }
+        }
       }
 
       case 'log_event': {
