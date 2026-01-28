@@ -117,6 +117,19 @@ For Claude Desktop or other MCP clients, add to your configuration file:
 }
 ```
 
+### Setup CLAUDE.md Instructions
+
+After installing, ask Claude to set up the recommended workflow instructions:
+
+> "Read the agent-supervisor setup instructions and add them to my CLAUDE.md"
+
+Claude will read the `supervisor://setup/claude-md` resource and append the governance workflow instructions to your `~/.claude/CLAUDE.md` file.
+
+Alternatively, read the resource manually:
+```
+ReadMcpResourceTool { server: "agent-supervisor", uri: "supervisor://setup/claude-md" }
+```
+
 ### Programmatic Usage
 
 ```typescript
@@ -209,6 +222,25 @@ Apply rules to understand constraints for a context.
 ### require_human_approval
 
 Request human approval for high-risk actions.
+
+**Recommended Usage (Claude Code CLI):**
+
+When using Claude Code interactively, the best pattern is for Claude to use its `AskUserQuestion` tool after calling `evaluate_action`:
+
+```
+1. Call evaluate_action → returns requiresHumanApproval: true
+2. Claude uses AskUserQuestion → User sees inline CLI prompt
+3. User approves/denies → Claude proceeds accordingly
+```
+
+This provides the best UX - instant inline prompts like Claude's built-in planning questions.
+
+**Direct MCP Call (Fallback):**
+
+If called directly, `require_human_approval` uses this fallback chain:
+1. MCP Elicitation (if supported by client)
+2. GitHub Issue with `needs-approval` label (via `gh` CLI)
+3. In-memory request storage
 
 ```json
 {

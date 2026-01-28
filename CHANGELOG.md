@@ -14,11 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Priority-Weighted Risk Scoring**: Enhanced RulesEngine to calculate risk scores based on rule priority weights, providing more accurate risk assessments
 - **Connection Pooling**: Implemented TCP connection pooling and caching in AppMonitor for efficient health checks (Task #47)
 - **Evaluation Caching**: Added caching to AgentSupervisor to reduce redundant evaluations and improve performance (Task #91)
-- **Dashboard Enhancements**:
-  - Authentication system with session management (Task #4)
-  - Dark mode support (Task #21)
-  - Configuration management UI (Task #24, #25)
-  - Write-through caching for improved responsiveness (Task #75, #89)
+- **Session Management**: Agent session tracking and registration
 - **RateLimiter Utilities**: Added helper methods for rate limit management (Task #45)
 - **AuditLogger QueryBuilder**: Introduced fluent query builder API for easier audit log queries (Task #49)
 - **CSS Analyzer Improvements**:
@@ -126,13 +122,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Active agent session monitoring
   - Git repository integration
   - Architecture change detection
-- **HTTP Dashboard** (port 3100):
-  - Real-time agent activity monitoring
-  - Pending approvals management
-  - Task board with GitHub integration
-  - Audit log viewer
-  - App health monitoring
-  - WebSocket updates every 2 seconds
+- **GitHub Issues Integration**: Task management via `gh` CLI
 - **80+ MCP Tools** for Claude agents:
   - Governance tools (`evaluate_action`, `apply_business_rules`, etc.)
   - Task management tools (`create_task`, `get_tasks`, `update_task`, etc.)
@@ -148,7 +138,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `healthcare` - HIPAA and healthcare
   - `development` - Developer-friendly defaults
   - `frontend` - Frontend-focused rules
-- **Design System**: CSS tokens and base styles for consistent dashboard UI
 - **CLI Interface**: Command-line tool for standalone operation
 - **TypeScript Support**: Full TypeScript definitions for type safety
 - **Comprehensive Test Suite**: Unit tests with Vitest for core components

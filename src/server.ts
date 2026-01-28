@@ -32,6 +32,75 @@ import {
   type SupervisorConfig
 } from './types/index.js';
 
+// ============================================================================
+// CLAUDE.MD INSTRUCTIONS - Returned via MCP resource for easy setup
+// ============================================================================
+
+function getClaudeMdInstructions(): string {
+  return `## Agent Supervisor (ManagerProtocol)
+
+**Use the Agent Supervisor MCP for governance, approvals, and audit logging.**
+
+### Required Workflow
+
+1. **At session start**: Run \`health_check\` to verify supervisor is available
+2. **Before significant actions**: Run \`evaluate_action\` to check compliance
+3. **After completing work**: Run \`log_event\` to record what was done
+4. **When approval needed**: Use \`AskUserQuestion\` for inline prompts (see below)
+
+### Human Approval Flow
+
+When \`evaluate_action\` returns \`requiresHumanApproval: true\`, prompt the user inline:
+
+\`\`\`
+1. Call evaluate_action → returns requiresHumanApproval: true
+2. Use AskUserQuestion → User sees inline CLI prompt
+3. User approves/denies → Proceed accordingly
+\`\`\`
+
+This provides instant feedback like Claude's built-in planning questions.
+
+### Key Tools
+
+| Tool | Purpose |
+|------|---------|
+| \`health_check\` | Verify supervisor is running |
+| \`evaluate_action\` | Check if action is allowed, get risk score |
+| \`log_event\` | Record audit events |
+| \`list_rules\` | See configured governance rules |
+| \`create_github_issue\` | Create tasks/issues via gh CLI |
+| \`css_eval\` | Evaluate CSS before adding |
+
+### Example: Evaluating an Action
+
+\`\`\`typescript
+const result = await evaluate_action({
+  action: {
+    name: "modify_database",
+    category: "data_modification",
+    description: "Delete inactive user records"
+  },
+  context: {
+    environment: "production",
+    dataClassification: "confidential"
+  }
+});
+
+if (result.requiresHumanApproval) {
+  // Use AskUserQuestion to prompt user inline
+}
+\`\`\`
+
+### GitHub Integration
+
+Task management uses \`gh\` CLI (requires \`gh auth login\`):
+- \`create_github_issue\` - Create issues with labels
+- \`list_github_issues\` - Query issues
+- \`update_github_issue\` - Modify issues
+- \`close_github_issue\` - Close with comment
+`;
+}
+
 // Initialize supervisor
 const supervisor = new AgentSupervisor({
   config: {
@@ -296,8 +365,13 @@ Returns:
 
 Use when an action is high-risk, outside normal parameters, or governance rules require human-in-the-loop.
 
-This tool prompts the user directly for approval via MCP elicitation.
-Returns the approval decision immediately (approved/denied).`,
+RECOMMENDED: In Claude Code CLI, after calling evaluate_action and seeing requiresHumanApproval: true,
+use Claude's AskUserQuestion tool to prompt the user inline. This provides the best UX.
+
+If called directly, this tool uses a fallback chain:
+1. MCP Elicitation (prompts user directly if client supports it)
+2. GitHub Issue with needs-approval label (via gh CLI)
+3. In-memory request storage`,
     inputSchema: {
       type: 'object',
       properties: {
@@ -1122,6 +1196,12 @@ server.setRequestHandler(ListResourcesRequestSchema, async () => ({
       description: 'Current audit and approval statistics',
       mimeType: 'application/json'
     },
+    {
+      uri: 'supervisor://setup/claude-md',
+      name: 'CLAUDE.md Instructions',
+      description: 'Recommended instructions to add to your ~/.claude/CLAUDE.md for optimal agent governance workflow',
+      mimeType: 'text/markdown'
+    },
   ]
 }));
 
@@ -1176,6 +1256,15 @@ server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
             audit: supervisor.getAuditStats(),
             approvals: supervisor.getApprovalStats()
           }, null, 2)
+        }]
+      };
+
+    case 'supervisor://setup/claude-md':
+      return {
+        contents: [{
+          uri,
+          mimeType: 'text/markdown',
+          text: getClaudeMdInstructions()
         }]
       };
 
